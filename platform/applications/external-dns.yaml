@@ -20,9 +20,13 @@ spec:
         registry: txt
         txtOwnerId: candle-lite-dev
         domainFilters:
-          - lite.candle.io.kr   # zone_name 바꾸면 여기도 override
+          - lite.candle.io.kr
         aws:
           region: ap-northeast-2
+        # k3s klipper LB가 Ingress의 external IP를 노드 사설 IP(10.20.0.x)로 세팅 →
+        # 그대로 A 레코드에 쓰면 외부에서 접근 불가. default-targets로 EIP 강제.
+        extraArgs:
+          - --default-targets=3.37.20.111
         resources:
           requests:
             cpu: 10m
