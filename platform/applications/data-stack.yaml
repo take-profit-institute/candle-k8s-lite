@@ -8,7 +8,7 @@ metadata:
 spec:
   project: candle-lite
   source:
-    repoURL: https://github.com/yyubin/candle-k8s-lite.git
+    repoURL: https://github.com/take-profit-institute/candle-k8s-lite.git
     targetRevision: main
     path: platform/manifests/base/data
   destination:

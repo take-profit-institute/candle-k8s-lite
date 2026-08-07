@@ -84,10 +84,10 @@ Ingress host별로 cert-manager가 TLS 발급:
 
 ## Repo URL 치환
 
-모든 매니페스트의 `https://github.com/yyubin/candle-k8s-lite.git` 을 실제 org/repo로 변경:
+모든 매니페스트의 `https://github.com/take-profit-institute/candle-k8s-lite.git` 을 실제 org/repo로 변경:
 ```bash
 # lite 폴더 안에서
-grep -rl "yyubin/candle-k8s-lite" | xargs sed -i 's|yyubin/candle-k8s-lite|<YOUR_ORG>/<YOUR_REPO>|g'
+grep -rl "take-profit-institute/candle-k8s-lite" | xargs sed -i 's|take-profit-institute/candle-k8s-lite|<YOUR_ORG>/<YOUR_REPO>|g'
 ```
 
 Terraform variables.tf 의 `gitops_repo_org` / `gitops_repo_name` 도 함께 변경.
