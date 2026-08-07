@@ -36,9 +36,9 @@ kind: Job
 metadata:
   name: init-jwt-key
   namespace: candle
-  annotations:
-    # 서비스 파드보다 먼저 완료되도록 wave 지정 (services는 wave 없음 = 0)
-    argocd.argoproj.io/sync-wave: "-1"
+  # sync-wave 제거: wave=-1이면 이 Job이 SA(wave 0)보다 먼저 apply돼서 스케줄 불가.
+  # 같은 wave(0)로 두면 SA도 함께 apply → Job controller가 재시도 → 정상 스케줄.
+  # auth-service 파드가 Secret 나오기 전 기동해도 k8s가 재시도(eventual consistency)로 처리.
 spec:
   backoffLimit: 5
   template:
