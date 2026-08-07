@@ -1,0 +1,36 @@
+# external-dns — Ingress host → Route53 A record 자동 생성.
+# EC2 instance profile(Terraform이 부여)이 Route53 권한을 가짐 → IMDS로 credentials 획득.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://kubernetes-sigs.github.io/external-dns/
+    chart: external-dns
+    targetRevision: 1.15.0
+    helm:
+      values: |
+        provider: aws
+        sources: [ingress]
+        # 자기가 만든 레코드만 관리 (와일드카드 A는 Terraform이 소유)
+        policy: sync
+        registry: txt
+        txtOwnerId: candle-lite-dev
+        domainFilters:
+          - lite.candle.io.kr   # zone_name 바꾸면 여기도 override
+        aws:
+          region: ap-northeast-2
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions:
+      - CreateNamespace=true

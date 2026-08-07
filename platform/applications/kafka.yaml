@@ -1,0 +1,20 @@
+# Kafka(KRaft 단일 브로커) + Kafka Connect(Debezium 플러그인) + connector Job
+# prod의 MSK+Strimzi 흐름을 인클러스터로 대체 — outbox → Debezium → Kafka 검증 가능
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-stack
+  namespace: argocd
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://github.com/yyubin/candle-k8s-lite.git
+    targetRevision: main
+    path: platform/manifests/base/kafka
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kafka
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions:
+      - CreateNamespace=true

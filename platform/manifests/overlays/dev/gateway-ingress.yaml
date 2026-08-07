@@ -1,0 +1,36 @@
+# API 진입 — gateway 서비스로 라우팅.
+# prod의 CloudFront+APIGW 흐름 대체 (JWT는 gateway 서비스 자체에서 검증).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: candle
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [api.lite.candle.io.kr, app.lite.candle.io.kr]
+      secretName: gateway-tls
+  rules:
+    - host: api.lite.candle.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8000
+    - host: app.lite.candle.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bff
+                port:
+                  number: 80

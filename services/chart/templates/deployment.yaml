@@ -1,0 +1,358 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "candle-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "candle-service.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "candle-service.selector" . | nindent 8 }}
+        {{- include "candle-service.labels" . | nindent 8 }}
+      {{- if .Values.metrics.enabled }}
+      annotations:
+        # Istio prometheus merge가 앱 메트릭 위치를 알도록 (병합 후 15020 노출)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ ternary .Values.port .Values.grpc.port .Values.http.enabled }}"
+        prometheus.io/path: "{{ .Values.metrics.path }}"
+      {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.name }}
+      containers:
+        - name: {{ .Values.name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            {{- if .Values.http.enabled }}
+            - name: http
+              containerPort: {{ .Values.port }}
+            {{- end }}
+            {{- if .Values.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.grpc.port }}
+            {{- end }}
+          {{- if or .Values.dbSecret .Values.appSecret }}
+          envFrom:
+            {{- if .Values.dbSecret }}
+            - secretRef:
+                name: {{ .Values.name }}-db
+            {{- end }}
+            {{- if .Values.appSecret }}
+            # 앱 설정 시크릿(OAuth/JWT 등) — 키가 그대로 env로 주입됨
+            - secretRef:
+                name: {{ .Values.name }}-app
+            {{- end }}
+          {{- end }}
+          env:
+            # 서비스별 server.port(8081~)를 컨테이너에서 8080으로 통일
+            - name: SERVER_PORT
+              value: "{{ .Values.port }}"
+            {{- if .Values.kafkaBootstrap }}
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafkaBootstrap | quote }}
+            {{- if contains ":9098" .Values.kafkaBootstrap }}
+            - name: SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL
+              value: "SASL_SSL"
+            - name: SPRING_KAFKA_PROPERTIES_SASL_MECHANISM
+              value: "AWS_MSK_IAM"
+            - name: SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG
+              value: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+            - name: SPRING_KAFKA_PROPERTIES_SASL_CLIENT_CALLBACK_HANDLER_CLASS
+              value: "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.grpc.enabled }}
+            - name: GRPC_SERVER_PORT
+              value: "{{ .Values.grpc.port }}"
+            {{- end }}
+            {{- if .Values.firebaseCredentialsSecret }}
+            - name: FIREBASE_CREDENTIALS_PATH
+              value: "file:/app/config/firebase/firebase-adminsdk.json"
+            {{- end }}
+            {{- if .Values.dbEnvPrefix }}
+            - name: {{ .Values.dbEnvPrefix }}_SERVER_PORT
+              value: "{{ .Values.port }}"
+            {{- if .Values.grpc.enabled }}
+            - name: {{ .Values.dbEnvPrefix }}_GRPC_PORT
+              value: "{{ .Values.grpc.port }}"
+            {{- end }}
+            {{- end }}
+            {{- if and .Values.dbSecret .Values.dbEnvPrefix }}
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: host
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: port
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: dbname
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: password
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: {{ .Values.dbEnvPrefix }}_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: {{ .Values.dbEnvPrefix }}_DB_URL
+            - name: {{ .Values.dbEnvPrefix }}_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: {{ .Values.dbEnvPrefix }}_DB_USERNAME
+            - name: {{ .Values.dbEnvPrefix }}_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-db
+                  key: {{ .Values.dbEnvPrefix }}_DB_PASSWORD
+            {{- end }}
+            {{- if eq .Values.name "ranking-service" }}
+            - name: RANKING_PORTFOLIO_GRPC_TARGET
+              value: "static://portfolio-service:9090"
+            {{- if .Values.redis.rankingHost }}
+            - name: RANKING_REDIS_HOST
+              value: {{ .Values.redis.rankingHost | quote }}
+            - name: RANKING_REDIS_PORT
+              value: "6379"
+            # lite: 인클러스터 redis 평문. redis.ssl=true 로 override하면 TLS 사용.
+            - name: SPRING_DATA_REDIS_SSL_ENABLED
+              value: {{ .Values.redis.ssl | quote }}
+            - name: SPRING_DATA_REDIS_CONNECT_TIMEOUT
+              value: {{ .Values.redis.connectTimeout | quote }}
+            - name: SPRING_DATA_REDIS_TIMEOUT
+              value: {{ .Values.redis.timeout | quote }}
+            # Redis 헬스 기여자 비활성 — 다운/지연이 /actuator/health(liveness)를 막지 않도록
+            - name: MANAGEMENT_HEALTH_REDIS_ENABLED
+              value: {{ .Values.redis.healthEnabled | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if eq .Values.name "market-service" }}
+            {{- if .Values.redis.priceCacheHost }}
+            - name: SPRING_DATA_REDIS_HOST
+              value: {{ .Values.redis.priceCacheHost | quote }}
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            - name: SPRING_DATA_REDIS_SSL_ENABLED
+              value: {{ .Values.redis.ssl | quote }}
+            - name: SPRING_DATA_REDIS_CONNECT_TIMEOUT
+              value: {{ .Values.redis.connectTimeout | quote }}
+            - name: SPRING_DATA_REDIS_TIMEOUT
+              value: {{ .Values.redis.timeout | quote }}
+            - name: MANAGEMENT_HEALTH_REDIS_ENABLED
+              value: {{ .Values.redis.healthEnabled | quote }}
+            {{- end }}
+            # 호가 REST refresh 대상 종목 목록은 stock-service catalog에서 조회한다.
+            - name: STOCK_SERVICE_GRPC_ADDRESS
+              value: "static://stock-service:9090"
+            {{- end }}
+            {{- if eq .Values.name "trading-service" }}
+            {{- if .Values.redis.priceCacheHost }}
+            # 시세 pub/sub 구독용 — market-service가 발행하는 Redis(priceCacheHost)와 동일 인스턴스.
+            # ElastiCache in-transit 암호화(TLS) 필수라 SSL 활성.
+            - name: MARKET_REDIS_HOST
+              value: {{ .Values.redis.priceCacheHost | quote }}
+            - name: MARKET_REDIS_PORT
+              value: "6379"
+            - name: SPRING_DATA_REDIS_SSL_ENABLED
+              value: {{ .Values.redis.ssl | quote }}
+            {{- end }}
+            # trading은 Redis(시세 pub/sub)를 필수 의존으로 쓰지 않는다. Redis 다운/미설정이
+            # /actuator/health(liveness)를 DOWN으로 만들어 파드를 crashloop-kill 하지 않도록
+            # 헬스 기여자를 끈다(ranking/market 선례와 동일).
+            - name: MANAGEMENT_HEALTH_REDIS_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if eq .Values.name "wishlist-service" }}
+            {{- if .Values.redis.marketPubsubHost }}
+            - name: REDIS_URL
+              value: {{ printf "%s://%s:6379" .Values.redis.scheme .Values.redis.marketPubsubHost | quote }}
+            {{- end }}
+            - name: NOTIFICATION_GRPC_ADDR
+              value: "notification-service:9090"
+            {{- end }}
+            {{- if eq .Values.name "news-service" }}
+            - name: STOCK_SERVICE_GRPC_ADDRESS
+              value: "static://stock-service:9090"
+            {{- end }}
+            {{- if eq .Values.name "trading-service" }}
+            # 시장가 즉시 체결 시 실시간 현재가(market-service GetQuote) + 전일종가(stock-service ChartService)
+            - name: MARKET_SERVICE_GRPC_ADDRESS
+              value: "static://market-service:9090"
+            - name: CHART_SERVICE_GRPC_ADDRESS
+              value: "static://stock-service:9090"
+            {{- end }}
+            {{- if eq .Values.name "portfolio-service" }}
+            # 포트폴리오 평가금/섹터 구성 계산 시 현재가를 market-service BatchQuotes로 조회한다.
+            - name: MARKET_SERVICE_GRPC_ADDRESS
+              value: "static://market-service:9090"
+            # 포트폴리오 요약의 현금 잔고는 trading-service AccountService.GetBalance로 조회한다.
+            - name: TRADING_SERVICE_GRPC_ADDRESS
+              value: "static://trading-service:9090"
+            # 보유 종목 메타데이터/섹터 보강은 stock-service StockService로 조회한다.
+            - name: STOCK_SERVICE_GRPC_ADDRESS
+              value: "static://stock-service:9090"
+            {{- end }}
+            {{- if eq .Values.name "batch" }}
+            - name: BATCH_MARKET_GRPC_TARGET
+              value: "static://market-service:9090"
+            - name: BATCH_STOCK_GRPC_TARGET
+              value: "static://stock-service:9090"
+            - name: BATCH_TRADING_GRPC_TARGET
+              value: "static://trading-service:9090"
+            - name: BATCH_PORTFOLIO_GRPC_TARGET
+              value: "static://portfolio-service:9090"
+            - name: BATCH_RANKING_GRPC_TARGET
+              value: "static://ranking-service:9090"
+            - name: BATCH_SMOKE_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if eq .Values.name "auth-service" }}
+            # lite: init-jwt-key Job이 생성한 RSA 2048 PEM (PKCS#8) 주입.
+            # 미주입 시 auth-service가 기동마다 임시 키 생성 → 재시작 후 JWT 무효.
+            - name: AUTH_JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-jwt-key
+                  key: private-key
+            {{- end }}
+            {{- if eq .Values.name "bff" }}
+            - name: GRPC_AUTH_ADDR
+              value: "auth-service:9090"
+            - name: AUTH_SERVICE_BASE_URL
+              value: "http://auth-service/api/v1/auth"
+            - name: GRPC_USER_ADDR
+              value: "user-service:9090"
+            - name: GRPC_MARKET_ADDR
+              value: "market-service:9090"
+            - name: GRPC_ACCOUNT_ADDR
+              value: "trading-service:9090"
+            - name: GRPC_PORTFOLIO_ADDR
+              value: "portfolio-service:9090"
+            - name: GRPC_RANKING_ADDR
+              value: "ranking-service:9090"
+            - name: GRPC_NOTIFICATION_ADDR
+              value: "notification-service:9090"
+            - name: GRPC_MISSION_ADDR
+              value: "mission-service:9090"
+            - name: GRPC_LEARN_ADDR
+              value: "learning-service:9090"
+            - name: GRPC_STOCK_ADDR
+              value: "stock-service:9090"
+            - name: GRPC_WISHLIST_ADDR
+              value: "wishlist-service:9090"
+            - name: GRPC_BATCH_ADDR
+              value: "batch:9090"
+            - name: GRPC_NEWS_ADDR
+              value: "news-service:9090"
+            {{- end }}
+            {{- with .Values.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.firebaseCredentialsSecret }}
+          volumeMounts:
+            - name: firebase-credentials
+              mountPath: /app/config/firebase/firebase-adminsdk.json
+              subPath: firebase-adminsdk.json
+              readOnly: true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- $grpcHealth := and .Values.grpc.enabled .Values.grpc.health }}
+          {{- if $grpcHealth }}
+          # gRPC 서버가 떠서 Health Check Protocol(grpc.health.v1.Health)에 응답할 때까지 대기.
+          # timeout 여유: istio 사이드카 프록시 경유 + JVM 웜업이라 기본 1s는 부족.
+          startupProbe:
+            grpc:
+              port: {{ .Values.grpc.port }}
+            failureThreshold: 40
+            periodSeconds: 5
+            timeoutSeconds: 5
+          {{- else if .Values.http.enabled }}
+          # gRPC 헬스 서비스가 없는(grpc.health=false) 서비스 → HTTP(actuator)로 기동 대기.
+          # gRPC Service 포트는 유지되므로 클라이언트(BFF 등)는 계속 gRPC로 호출 가능.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.healthPath }}
+              port: {{ .Values.port }}
+            failureThreshold: 40
+            periodSeconds: 5
+            timeoutSeconds: 5
+          {{- end }}
+          {{- if .Values.http.enabled }}
+          # liveness는 HTTP(Istio가 probe rewrite로 mTLS 우회) — 프로세스 생존 확인
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthPath }}
+              port: {{ .Values.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          {{- else if $grpcHealth }}
+          livenessProbe:
+            grpc:
+              port: {{ .Values.grpc.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          {{- end }}
+          readinessProbe:
+            {{- if $grpcHealth }}
+            # readiness는 gRPC Health Check — gRPC 서빙 가능할 때만 트래픽 수신
+            grpc:
+              port: {{ .Values.grpc.port }}
+            {{- else }}
+            httpGet:
+              path: {{ .Values.healthPath }}
+              port: {{ .Values.port }}
+            {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      {{- if .Values.firebaseCredentialsSecret }}
+      volumes:
+        - name: firebase-credentials
+          secret:
+            secretName: {{ .Values.firebaseCredentialsSecret }}
+            items:
+              - key: firebase-adminsdk.json
+                path: firebase-adminsdk.json
+      {{- end }}

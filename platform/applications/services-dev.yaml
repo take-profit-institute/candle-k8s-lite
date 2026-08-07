@@ -1,0 +1,106 @@
+# 13개 마이크로서비스 — 로컬 chart(services/chart, ExternalSecret 없이) 사용.
+# tag는 CI가 SHA로 bump. 초기값은 prod services-dev.yaml에서 복사 → 실 배포 전 갱신.
+# roleArn/appSecret은 lite에선 빈 값(chart가 조건부로 생략).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: candle-lite-services
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          # auth-service는 자체 keypair로 RS256 JWT 발급 + /.well-known/jwks.json 노출.
+          # AUTH_JWT_ISSUER는 gateway/bff/chatting의 issuer validator와 일치해야 함(api.lite.<zone>).
+          - {name: auth-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "auth-service-db",         dbEnvPrefix: "AUTH", env: [{name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
+          - {name: user-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "user-service-db",         dbEnvPrefix: "USER"}
+          - {name: trading-service,      tag: c59bfbdc26a65e3ca3bde91870312957d9bcc458, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "trading-service-db",      dbEnvPrefix: "TRADING"}
+          - {name: portfolio-service,    tag: 5f372b3b80bd3137a9b26574b55ae9636df2523d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "portfolio-service-db",    dbEnvPrefix: "PORTFOLIO"}
+          - {name: ranking-service,      tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "ranking-service-db",      dbEnvPrefix: "RANKING"}
+          - {name: mission-service,      tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "mission-service-db",      dbEnvPrefix: "MISSION"}
+          - {name: learning-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "learning-service-db",     dbEnvPrefix: "LEARNING"}
+          - {name: market-service,       tag: 1ade843d85eb69b084eb07ae60b699b643322e5d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "market-service-db",       dbEnvPrefix: "MARKET"}
+          - {name: notification-service, tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "notification-service-db", dbEnvPrefix: "NOTIFICATION"}
+          - {name: stock-service,        tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "stock-service-db",        dbEnvPrefix: "STOCK"}
+          - {name: wishlist-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "wishlist-service-db",     dbEnvPrefix: "WISHLIST"}
+          - {name: news-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  grpcHealth: false, http: true, metricsEnabled: false, hpaEnabled: false, dbSecret: "news-service-db", dbEnvPrefix: "NEWS"}
+          - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH"}
+          - {name: bff,                  tag: 3d544d28209175454f998af49f6b00827a1853c9, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, healthPath: "/health", dbSecret: "", env: [{name: "REDIS_URL", value: "redis://redis:6379"}, {name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
+          - {name: chatting-service,     tag: 43560309ecf6f354fabc01d04f79ee64905d9dd2, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "chatting-service-db", dbEnvPrefix: "CHAT", env: [{name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
+          # ── gateway (Spring Cloud Gateway) — prod의 AWS API Gateway를 컨테이너로 대체
+          # 컨테이너/서비스 포트 8000. JWT는 RS256+JWKS (auth-service /.well-known/jwks.json).
+          # ISSUER는 auth-service가 발급 시 넣는 값과 반드시 일치. AUDIENCE 검증 활성.
+          # CORS는 AllowedOriginPatterns → vercel 프리뷰 등 와일드카드 매칭 지원.
+          - {name: gateway, tag: dev, image: "yyubin/candle-gateway", port: 8000, servicePort: 8000, grpc: false, http: true, healthPath: "/actuator/health", metricsEnabled: false, hpaEnabled: false, dbSecret: "", env: [{name: "GATEWAY_PORT", value: "8000"}, {name: "GATEWAY_JWT_JWK_SET_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "GATEWAY_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "GATEWAY_JWT_AUDIENCE", value: "candle-api"}, {name: "GATEWAY_AUTH_URI", value: "http://auth-service"}, {name: "GATEWAY_BFF_URI", value: "http://bff"}, {name: "GATEWAY_CHAT_URI", value: "http://chatting-service"}, {name: "GATEWAY_CORS_ALLOWED_ORIGIN_PATTERNS", value: "https://app.lite.candle.io.kr,http://localhost:3000,http://localhost:3001,http://localhost,capacitor://localhost"}]}
+  template:
+    metadata:
+      name: "svc-{{ .name }}"
+    spec:
+      project: candle-lite
+      source:
+        repoURL: https://github.com/yyubin/candle-k8s-lite.git
+        targetRevision: main
+        path: services/chart
+        helm:
+          values: |
+            name: {{ .name }}
+            namespace: candle
+            image:
+              # image 지정 시 그대로(Docker Hub 등), 아니면 공유 ECR 규약(candle/<name>) 사용
+              repository: {{ if hasKey . "image" }}{{ .image }}{{ else }}633597729239.dkr.ecr.ap-northeast-2.amazonaws.com/candle/{{ .name }}{{ end }}
+              tag: {{ .tag }}
+            replicas: {{ default 1 .replicas }}
+            {{- if hasKey . "port" }}
+            port: {{ .port }}
+            {{- end }}
+            {{- if hasKey . "servicePort" }}
+            servicePort: {{ .servicePort }}
+            {{- end }}
+            http:
+              enabled: {{ .http }}
+            grpc:
+              enabled: {{ .grpc }}
+              health: {{ if hasKey . "grpcHealth" }}{{ .grpcHealth }}{{ else }}true{{ end }}
+            healthPath: {{ default "/actuator/health" .healthPath }}
+            metrics:
+              enabled: {{ .metricsEnabled }}
+              path: {{ default "/actuator/prometheus" .metricsPath }}
+            hpa:
+              enabled: {{ .hpaEnabled }}
+              minReplicas: 1
+            serviceAccount:
+              roleArn: ""
+            dbSecret: {{ .dbSecret | quote }}
+            dbEnvPrefix: {{ default "" .dbEnvPrefix | quote }}
+            # lite: 인클러스터 kafka (PLAINTEXT — chart의 :9098 감지 로직에 안 걸림)
+            kafkaBootstrap: "kafka-0.kafka.kafka.svc.cluster.local:9092"
+            redis:
+              # 단일 redis가 3개 use case 모두 담당
+              rankingHost: "redis"
+              priceCacheHost: "redis"
+              marketPubsubHost: "redis"
+              # 인클러스터 평문 — SSL 필요 없음. deployment.yaml이 SSL_ENABLED=true를 하드코딩하는
+              # 서비스(market/trading/ranking)는 chart 수정 필요(README 참고).
+            appSecret: ""
+            # dev이므로 리소스 타이트하게
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+            {{- with .env }}
+            env:
+              {{- range . }}
+              - name: {{ .name }}
+                value: {{ .value | quote }}
+              {{- end }}
+            {{- end }}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: candle
+      syncPolicy:
+        automated: {prune: true, selfHeal: true}
+        syncOptions:
+          - CreateNamespace=true

@@ -1,0 +1,28 @@
+# ArgoCD UI 노출 — HTTPS via cert-manager
+# argocd-server가 --insecure 모드(HTTP)로 떠있으니 ingress에서 TLS 종단
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    # argocd CLI/UI gRPC 스트림
+    nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [argocd.lite.candle.io.kr]
+      secretName: argocd-tls
+  rules:
+    - host: argocd.lite.candle.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80

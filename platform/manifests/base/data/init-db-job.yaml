@@ -1,0 +1,168 @@
+# postgres 부트스트랩 Job — 서비스별 DB/유저 생성 + <svc>-db k8s Secret 자동 생성.
+# prod의 postgres-init Terraform 모듈 역할을 담당.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: init-db
+  namespace: candle
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: init-db
+  namespace: candle
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: init-db
+  namespace: candle
+subjects:
+  - {kind: ServiceAccount, name: init-db, namespace: candle}
+roleRef:
+  kind: Role
+  name: init-db
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-db-script
+  namespace: candle
+data:
+  init.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    export PGPASSWORD="$SUPERUSER_PASSWORD"
+    PSQL="psql -h postgres -U postgres -v ON_ERROR_STOP=1"
+
+    # (name = k8s ServiceAccount/서비스명, db = DB명, prefix = env prefix)
+    # prod: services-dev.yaml 의 dbEnvPrefix 값을 따라감.
+    SERVICES=(
+      "auth-service:auth:AUTH"
+      "user-service:users:USER"
+      "trading-service:trading:TRADING"
+      "portfolio-service:portfolio:PORTFOLIO"
+      "ranking-service:ranking:RANKING"
+      "mission-service:mission:MISSION"
+      "learning-service:learning:LEARNING"
+      "notification-service:notification:NOTIFICATION"
+      "stock-service:stock:STOCK"
+      "news-service:news:NEWS"
+      "wishlist-service:wishlist:WISHLIST"
+      "batch:batch:BATCH"
+      "chatting-service:chat:CHAT"
+    )
+
+    # Debezium replication user (WAL 접근)
+    $PSQL -d postgres <<SQL
+      DO \$\$ BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'debezium') THEN
+          CREATE ROLE debezium WITH LOGIN REPLICATION PASSWORD 'candle-dev-debezium-pw';
+        END IF;
+      END \$\$;
+    SQL
+
+    for entry in "${SERVICES[@]}"; do
+      IFS=':' read -r svc db prefix <<<"$entry"
+      pw="candle-dev-${svc}-pw"
+
+      echo "─ Provisioning $svc / db=$db ─"
+      $PSQL -d postgres <<SQL
+        DO \$\$ BEGIN
+          IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$db') THEN
+            CREATE ROLE "$db" WITH LOGIN PASSWORD '$pw';
+          END IF;
+        END \$\$;
+      SQL
+
+      # CREATE DATABASE는 트랜잭션 밖에서 실행되어야 함
+      if ! $PSQL -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1; then
+        $PSQL -c "CREATE DATABASE \"$db\" OWNER \"$db\";"
+      fi
+
+      # debezium이 각 DB에 connect + SELECT/replication 가능하게
+      $PSQL -d "$db" <<SQL
+        GRANT CONNECT ON DATABASE "$db" TO debezium;
+        GRANT USAGE ON SCHEMA public TO debezium;
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO debezium;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO debezium;
+      SQL
+
+      # k8s Secret 생성/업데이트 — 서비스 chart 가 참조하는 <svc>-db 이름 규약
+      spring_url="jdbc:postgresql://postgres:5432/${db}"
+      kubectl -n candle create secret generic "${svc}-db" \
+        --from-literal=host=postgres \
+        --from-literal=port=5432 \
+        --from-literal=dbname="$db" \
+        --from-literal=username="$db" \
+        --from-literal=password="$pw" \
+        --from-literal=SPRING_DATASOURCE_URL="$spring_url" \
+        --from-literal=SPRING_DATASOURCE_USERNAME="$db" \
+        --from-literal=SPRING_DATASOURCE_PASSWORD="$pw" \
+        --from-literal=${prefix}_DB_URL="$spring_url" \
+        --from-literal=${prefix}_DB_USERNAME="$db" \
+        --from-literal=${prefix}_DB_PASSWORD="$pw" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    done
+
+    # market은 TimescaleDB → 별도 Secret (chart는 dbSecret으로 참조하지 않지만 통일용)
+    kubectl -n candle create secret generic market-service-db \
+      --from-literal=host=timescaledb \
+      --from-literal=port=5432 \
+      --from-literal=dbname=market \
+      --from-literal=username=market \
+      --from-literal=password=candle-dev-market-pw \
+      --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://timescaledb:5432/market" \
+      --from-literal=SPRING_DATASOURCE_USERNAME=market \
+      --from-literal=SPRING_DATASOURCE_PASSWORD=candle-dev-market-pw \
+      --from-literal=MARKET_DB_URL="jdbc:postgresql://timescaledb:5432/market" \
+      --from-literal=MARKET_DB_USERNAME=market \
+      --from-literal=MARKET_DB_PASSWORD=candle-dev-market-pw \
+      --dry-run=client -o yaml | kubectl apply -f -
+
+    echo "=== init-db complete ==="
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-db
+  namespace: candle
+  annotations:
+    # Job 스펙 immutable → 재실행 필요하면 annotation 값만 bump
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      serviceAccountName: init-db
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          # psql + kubectl 둘 다 필요 → alpine에 얹음
+          image: alpine:3.20
+          command: [/bin/sh, -c]
+          args:
+            - |
+              apk add --no-cache postgresql16-client curl bash
+              curl -sLO https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl
+              install kubectl /usr/local/bin/kubectl
+              until pg_isready -h postgres -U postgres; do
+                echo "waiting postgres..."; sleep 3
+              done
+              exec bash /scripts/init.sh
+          env:
+            - name: SUPERUSER_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres-superuser, key: password}}
+          volumeMounts:
+            - {name: script, mountPath: /scripts}
+      volumes:
+        - name: script
+          configMap:
+            name: init-db-script
+            defaultMode: 0755

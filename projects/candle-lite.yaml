@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: candle-lite
+  namespace: argocd
+spec:
+  description: Candle lite (k3s dev) — Terraform이 EC2에 k3s+ArgoCD 부트스트랩 후 이 프로젝트가 나머지 관리
+  sourceRepos:
+    - https://github.com/yyubin/candle-k8s-lite.git
+    - https://kubernetes.github.io/ingress-nginx
+    - https://charts.jetstack.io
+    - https://kubernetes-sigs.github.io/external-dns/
+    - https://charts.bitnami.com/bitnami
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

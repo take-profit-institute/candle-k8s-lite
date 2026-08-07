@@ -1,0 +1,21 @@
+# DB 스택 — postgres(공용) + timescaledb(market) + redis×2
+# 매니페스트: platform/manifests/base/data/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: data-stack
+  namespace: argocd
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://github.com/yyubin/candle-k8s-lite.git
+    targetRevision: main
+    path: platform/manifests/base/data
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: candle
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

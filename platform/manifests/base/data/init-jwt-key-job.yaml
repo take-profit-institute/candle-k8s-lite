@@ -1,0 +1,92 @@
+# auth-service의 RS256 서명용 RSA 개인키를 최초 1회 생성 → Secret 저장.
+# auth-service가 이 Secret을 마운트하면 파드 재기동해도 동일 키 유지 (JWT 세션 지속).
+#
+# 이미 존재하면 skip (재실행해도 키 안 바뀜).
+# 키 로테이션이 필요하면 Secret 삭제 후 Job 재실행.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: init-jwt-key
+  namespace: candle
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: init-jwt-key
+  namespace: candle
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: init-jwt-key
+  namespace: candle
+subjects:
+  - {kind: ServiceAccount, name: init-jwt-key, namespace: candle}
+roleRef:
+  kind: Role
+  name: init-jwt-key
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-jwt-key
+  namespace: candle
+  annotations:
+    # 서비스 파드보다 먼저 완료되도록 wave 지정 (services는 wave 없음 = 0)
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      serviceAccountName: init-jwt-key
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: alpine:3.20
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              apk add --no-cache openssl curl
+
+              # Secret 이미 있으면 kubectl 없이도 판별 위해 API로 확인
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+              API=https://kubernetes.default.svc
+
+              if curl -sf --cacert $CA -H "Authorization: Bearer $TOKEN" \
+                   "$API/api/v1/namespaces/$NS/secrets/auth-jwt-key" >/dev/null; then
+                echo "auth-jwt-key already exists — skip"
+                exit 0
+              fi
+
+              # RSA 2048 keypair 생성 → PEM PKCS#8
+              openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+                -out /tmp/priv.pem
+              # auth-service는 PKCS#8을 파싱하므로 그대로 사용
+              # (openssl genpkey는 이미 PKCS#8 형식)
+
+              # kubectl 없이 API로 Secret 생성
+              PEM_B64=$(base64 -w0 /tmp/priv.pem)
+              BODY=$(cat <<EOF
+              {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": "auth-jwt-key"},
+                "type": "Opaque",
+                "data": {"private-key": "$PEM_B64"}
+              }
+              EOF
+              )
+              curl -sf --cacert $CA -H "Authorization: Bearer $TOKEN" \
+                -H 'Content-Type: application/json' \
+                -X POST -d "$BODY" \
+                "$API/api/v1/namespaces/$NS/secrets"
+
+              echo "auth-jwt-key created (RSA 2048)"

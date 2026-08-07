@@ -1,0 +1,115 @@
+# prod의 kafka-connector-*.yaml (Strimzi CR) 대응.
+# 커넥터 spec을 REST API로 POST — Connect 컨테이너 준비되면 자동 실행.
+# 서비스별 outbox → <svc>.public.<table> 토픽 생성.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debezium-connectors
+  namespace: kafka
+data:
+  # 서비스별 커넥터 JSON. 각 서비스가 candle DB 내 자기 DB 스키마의 outbox를 감시.
+  # host=postgres.candle.svc, user=debezium, password=candle-dev-debezium-pw
+  auth.json: |
+    {
+      "name": "auth-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "auth",
+        "topic.prefix": "auth",
+        "plugin.name": "pgoutput",
+        "slot.name": "auth_debezium",
+        "publication.name": "auth_outbox_pub",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "public.outbox",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+      }
+    }
+  user.json: |
+    {
+      "name": "user-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "users",
+        "topic.prefix": "users",
+        "plugin.name": "pgoutput",
+        "slot.name": "users_debezium",
+        "publication.name": "users_outbox_pub",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "public.outbox",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+      }
+    }
+  trading.json: |
+    {
+      "name": "trading-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "trading",
+        "topic.prefix": "trading",
+        "plugin.name": "pgoutput",
+        "slot.name": "trading_debezium",
+        "publication.name": "trading_outbox_pub",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "public.outbox",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+      }
+    }
+  # 나머지 서비스(ranking, notification, stock, wishlist)는 위 패턴 복붙 — 필요할 때 추가.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: debezium-connectors-apply
+  namespace: kafka
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: apply
+          image: curlimages/curl:8.11.0
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              until curl -sf http://kafka-connect:8083/connectors >/dev/null; do
+                echo "waiting kafka-connect..."; sleep 5
+              done
+              for f in /connectors/*.json; do
+                name=$(basename "$f" .json)
+                echo "─ registering $name ─"
+                # 존재하면 update, 없으면 create
+                curl -sf -X PUT -H 'Content-Type: application/json' \
+                  --data @"$f" \
+                  "http://kafka-connect:8083/connectors/$(cat $f | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p')/config" \
+                  || curl -sf -X POST -H 'Content-Type: application/json' \
+                     --data @"$f" http://kafka-connect:8083/connectors
+                echo
+              done
+          volumeMounts:
+            - {name: connectors, mountPath: /connectors}
+      volumes:
+        - name: connectors
+          configMap: {name: debezium-connectors}

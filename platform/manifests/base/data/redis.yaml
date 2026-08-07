@@ -1,0 +1,52 @@
+# Redis (단일 인스턴스, dev 리소스 절감).
+# prod에서 3개(ranking/price-cache/market-pubsub)로 분리된 것을 한 인스턴스가 모두 담당.
+# → 서비스 chart values에서 세 host 값 모두 'redis'로 세팅.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: candle
+spec:
+  selector: {app: redis}
+  ports:
+    - {name: redis, port: 6379, targetPort: 6379}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: candle
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # Pub/Sub이 활성 소비자 없으면 이벤트 버림 → 그건 원래 Redis 동작(문제 아님).
+          # maxmemory-policy: dev이므로 기본 noeviction 유지 (allkeys-lru 원하면 args 추가)
+          ports: [{containerPort: 6379}]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: redis-data}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: candle
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 2Gi}

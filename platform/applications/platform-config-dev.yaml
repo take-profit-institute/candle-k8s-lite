@@ -1,0 +1,20 @@
+# 클러스터 공통 부속 — namespaces, ClusterIssuer, argocd/gateway Ingress
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-config-dev
+  namespace: argocd
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://github.com/yyubin/candle-k8s-lite.git
+    targetRevision: main
+    path: platform/manifests/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: candle
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

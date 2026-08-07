@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "candle-service.labels" . | nindent 4 }}
+  {{- if .Values.albHealthcheckPath }}
+  # ALB Ingress(ws)가 이 Service의 타깃 그룹을 지정 경로로 헬스체크 (기본 "/"는 WS 서비스에서 404)
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.albHealthcheckPath | quote }}
+    alb.ingress.kubernetes.io/success-codes: "200"
+  {{- end }}
+spec:
+  selector:
+    {{- include "candle-service.selector" . | nindent 4 }}
+  ports:
+    {{- if .Values.http.enabled }}
+    - name: http
+      port: {{ .Values.servicePort }}
+      targetPort: {{ .Values.port }}
+    {{- end }}
+    {{- if .Values.grpc.enabled }}
+    # 포트 이름 'grpc' → Istio가 HTTP/2(gRPC) 프로토콜로 인식
+    - name: grpc
+      port: {{ .Values.grpc.servicePort }}
+      targetPort: {{ .Values.grpc.port }}
+      appProtocol: grpc
+    {{- end }}

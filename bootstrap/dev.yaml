@@ -1,0 +1,26 @@
+# app-of-apps 루트. Terraform user_data가 최초 1회 kubectl apply.
+# platform/applications 안의 child Application/AppSet 을 모두 자동 생성.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: candle-lite-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://github.com/yyubin/candle-k8s-lite.git
+    targetRevision: main
+    path: platform/applications
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

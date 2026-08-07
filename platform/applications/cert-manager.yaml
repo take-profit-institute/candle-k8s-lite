@@ -1,0 +1,40 @@
+# cert-manager — Let's Encrypt HTTP-01 challenge로 무료 TLS 인증서 자동 발급/갱신
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+spec:
+  project: candle-lite
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.16.1
+    helm:
+      values: |
+        crds:
+          enabled: true
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+        webhook:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+        cainjector:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
