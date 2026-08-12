@@ -13,7 +13,7 @@ spec:
         elements:
           # auth-service는 자체 keypair로 RS256 JWT 발급 + /.well-known/jwks.json 노출.
           # AUTH_JWT_ISSUER는 gateway/bff/chatting의 issuer validator와 일치해야 함(api.lite.<zone>).
-          - {name: auth-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "auth-service-db",         dbEnvPrefix: "AUTH", env: [{name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
+          - {name: auth-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "auth-service-db",         dbEnvPrefix: "AUTH", appSecret: "auth-service-app", env: [{name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
           - {name: user-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "user-service-db",         dbEnvPrefix: "USER"}
           - {name: trading-service,      tag: c59bfbdc26a65e3ca3bde91870312957d9bcc458, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "trading-service-db",      dbEnvPrefix: "TRADING"}
           - {name: portfolio-service,    tag: 5f372b3b80bd3137a9b26574b55ae9636df2523d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "portfolio-service-db",    dbEnvPrefix: "PORTFOLIO"}
