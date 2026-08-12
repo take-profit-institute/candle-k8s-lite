@@ -75,7 +75,9 @@ data:
 
     # ── 2) debezium role — -c 옵션으로 통일 (YAML/heredoc terminator 이슈 회피)
     $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='debezium') THEN CREATE ROLE debezium WITH LOGIN REPLICATION PASSWORD 'candle-dev-debezium-pw'; END IF; END \$\$;"
-    $PSQL -d "$APP_DB" -c "GRANT CONNECT ON DATABASE \"$APP_DB\" TO debezium;"
+    # CREATE 권한: prod는 Terraform이 publication을 사전생성하지만 lite는 커넥터가
+    # publication.autocreate.mode=filtered로 직접 만든다 → CREATE PUBLICATION에 DB CREATE 필요.
+    $PSQL -d "$APP_DB" -c "GRANT CONNECT ON DATABASE \"$APP_DB\" TO debezium; GRANT CREATE ON DATABASE \"$APP_DB\" TO debezium;"
 
     # ── 3) 서비스별 role + schema (owner) + 권한
     for entry in "${SERVICES[@]}"; do
@@ -88,7 +90,9 @@ data:
       $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='$schema') THEN CREATE ROLE \"$schema\" WITH LOGIN PASSWORD '$pw'; END IF; END \$\$;"
 
       # 3b) schema (owner = 해당 role) + grants — 세미콜론 다중 statement
-      $PSQL -d "$APP_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$schema\" AUTHORIZATION \"$schema\"; GRANT CONNECT ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT CREATE ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT USAGE ON SCHEMA \"$schema\" TO debezium; GRANT SELECT ON ALL TABLES IN SCHEMA \"$schema\" TO debezium; ALTER DEFAULT PRIVILEGES FOR ROLE \"$schema\" IN SCHEMA \"$schema\" GRANT SELECT ON TABLES TO debezium;"
+      # CREATE PUBLICATION ... FOR TABLE은 대상 테이블 소유자여야 한다. debezium을 서비스 role의
+      # 멤버로 넣어 소유권 검사를 통과시킨다(멤버십 = has_privs_of_role). prod는 사전생성이라 불필요.
+      $PSQL -d "$APP_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$schema\" AUTHORIZATION \"$schema\"; GRANT CONNECT ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT CREATE ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT USAGE ON SCHEMA \"$schema\" TO debezium; GRANT SELECT ON ALL TABLES IN SCHEMA \"$schema\" TO debezium; ALTER DEFAULT PRIVILEGES FOR ROLE \"$schema\" IN SCHEMA \"$schema\" GRANT SELECT ON TABLES TO debezium; GRANT \"$schema\" TO debezium;"
 
       # 3c) trading 추가 schema
       if [ "$schema" = "trading" ]; then

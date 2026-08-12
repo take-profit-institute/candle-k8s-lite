@@ -7,8 +7,17 @@ metadata:
   name: debezium-connectors
   namespace: kafka
 data:
-  # 서비스별 커넥터 JSON. 각 서비스가 candle DB 내 자기 DB 스키마의 outbox를 감시.
+  # 서비스별 커넥터 JSON. init-db-job이 만드는 단일 candle DB의 <schema>.outbox_events를 감시.
+  # (DB가 서비스별로 나뉘어 있지 않다 — dbname은 전부 candle, 구분은 table.include.list의 schema로.)
   # host=postgres.candle.svc, user=debezium, password=candle-dev-debezium-pw
+  #
+  # outbox 테이블명은 서비스마다 다르다(prod 커넥터와 동일):
+  #   auth/notification/stock/wishlist → <schema>.outbox_events
+  #   users → users.user_outbox_events / ranking → ranking.ranking_outbox_events
+  #   trading → account/order_svc/reservation 3개 스키마의 outbox_events를 한 커넥터가 캡처
+  #
+  # publication은 prod처럼 사전생성(Terraform)이 없으므로 autocreate=filtered로 커넥터가 직접 만든다.
+  # 이를 위해 init-db-job이 debezium에게 DB CREATE + 각 서비스 role 멤버십을 부여한다.
   auth.json: |
     {
       "name": "auth-outbox",
@@ -19,16 +28,21 @@ data:
         "database.port": "5432",
         "database.user": "debezium",
         "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "auth",
-        "topic.prefix": "auth",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.auth",
         "plugin.name": "pgoutput",
-        "slot.name": "auth_debezium",
-        "publication.name": "auth_outbox_pub",
+        "slot.name": "debezium_auth",
+        "publication.name": "dbz_pub_auth",
         "publication.autocreate.mode": "filtered",
-        "table.include.list": "public.outbox",
+        "table.include.list": "auth.outbox_events",
         "transforms": "outbox",
         "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
       }
     }
   user.json: |
@@ -41,16 +55,21 @@ data:
         "database.port": "5432",
         "database.user": "debezium",
         "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "users",
-        "topic.prefix": "users",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.user",
         "plugin.name": "pgoutput",
-        "slot.name": "users_debezium",
-        "publication.name": "users_outbox_pub",
+        "slot.name": "debezium_users",
+        "publication.name": "dbz_pub_users",
         "publication.autocreate.mode": "filtered",
-        "table.include.list": "public.outbox",
+        "table.include.list": "users.user_outbox_events",
         "transforms": "outbox",
         "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
       }
     }
   trading.json: |
@@ -63,19 +82,25 @@ data:
         "database.port": "5432",
         "database.user": "debezium",
         "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "trading",
-        "topic.prefix": "trading",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.trading",
         "plugin.name": "pgoutput",
-        "slot.name": "trading_debezium",
-        "publication.name": "trading_outbox_pub",
+        "slot.name": "debezium_trading",
+        "publication.name": "dbz_pub_trading",
         "publication.autocreate.mode": "filtered",
-        "table.include.list": "public.outbox",
+        "table.include.list": "account.outbox_events,order_svc.outbox_events,reservation.outbox_events",
         "transforms": "outbox",
         "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}"
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
       }
     }
   # 나머지 서비스(ranking, notification, stock, wishlist)는 위 패턴 복붙 — 필요할 때 추가.
+  # notification은 prod에서 table.field.event.id=event_id도 함께 지정한다.
 ---
 apiVersion: batch/v1
 kind: Job
