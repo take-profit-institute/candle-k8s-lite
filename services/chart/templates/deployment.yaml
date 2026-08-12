@@ -300,7 +300,7 @@ spec:
           startupProbe:
             grpc:
               port: {{ .Values.grpc.port }}
-            failureThreshold: 40
+            failureThreshold: {{ default 40 .Values.startupFailureThreshold }}
             periodSeconds: 5
             timeoutSeconds: 5
           {{- else if .Values.http.enabled }}
@@ -310,7 +310,7 @@ spec:
             httpGet:
               path: {{ .Values.healthPath }}
               port: {{ .Values.port }}
-            failureThreshold: 40
+            failureThreshold: {{ default 40 .Values.startupFailureThreshold }}
             periodSeconds: 5
             timeoutSeconds: 5
           {{- end }}

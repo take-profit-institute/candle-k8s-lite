@@ -93,3 +93,8 @@ hpa:
           value: 2
           periodSeconds: 60
       selectPolicy: Max
+
+# startupProbe 허용 횟수 (periodSeconds=5 → 기본 40 = 200초).
+# 기동 시 블로킹 작업이 있는 서비스는 늘린다. 예: news-service의 NewsCollectionCatchUpRunner는
+# ApplicationRunner라 완료돼야 ApplicationReadyEvent가 발행되고 readiness가 UP이 된다.
+startupFailureThreshold: 40
