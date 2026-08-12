@@ -1,212 +1,195 @@
 # prod의 kafka-connector-*.yaml (Strimzi CR) 대응.
-# 커넥터 spec을 REST API로 POST — Connect 컨테이너 준비되면 자동 실행.
-# 서비스별 outbox → <svc>.public.<table> 토픽 생성.
+# 커넥터 spec을 Connect REST API로 PUT — Connect가 준비되면 Job이 자동 등록.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: debezium-connectors
   namespace: kafka
 data:
-  # 서비스별 커넥터 JSON. init-db-job이 만드는 단일 candle DB의 <schema>.outbox_events를 감시.
-  # (DB가 서비스별로 나뉘어 있지 않다 — dbname은 전부 candle, 구분은 table.include.list의 schema로.)
-  # host=postgres.candle.svc, user=debezium, password=candle-dev-debezium-pw
+  # 파일명 = 커넥터 이름(<name>.json), 내용 = config 객체만.
+  # PUT /connectors/<name>/config 는 없으면 생성·있으면 갱신이라 이 호출 하나로 끝난다.
+  #
+  # init-db-job이 만드는 단일 candle DB의 <schema>.outbox_events를 감시한다.
+  # (DB가 서비스별로 나뉘어 있지 않다 — dbname은 전부 candle, 구분은 schema로.)
   #
   # outbox 테이블명은 서비스마다 다르다(prod 커넥터와 동일):
   #   auth/notification/stock/wishlist → <schema>.outbox_events
   #   users → users.user_outbox_events / ranking → ranking.ranking_outbox_events
   #   trading → account/order_svc/reservation 3개 스키마의 outbox_events를 한 커넥터가 캡처
   #
-  # publication은 prod처럼 사전생성(Terraform)이 없으므로 autocreate=filtered로 커넥터가 직접 만든다.
-  # 이를 위해 init-db-job이 debezium에게 DB CREATE + 각 서비스 role 멤버십을 부여한다.
-  auth.json: |
+  # 비번은 git에 두지 않는다 — __DEBEZIUM_PASSWORD__ 자리표시자를 Job이 kafka/debezium-creds
+  # Secret 값으로 치환해 POST한다. (Secret은 init-secrets-job이 생성·복제)
+  #
+  # publication은 prod처럼 사전생성(Terraform)이 없으므로 autocreate=filtered로 커넥터가 직접
+  # 만든다. 이를 위해 init-db-job이 debezium에게 DB CREATE + 각 서비스 role 멤버십을 부여한다.
+  auth-outbox.json: |
     {
-      "name": "auth-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.auth",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_auth",
-        "publication.name": "dbz_pub_auth",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "auth.outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.auth",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_auth",
+      "publication.name": "dbz_pub_auth",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "auth.outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  user.json: |
+  user-outbox.json: |
     {
-      "name": "user-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.user",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_users",
-        "publication.name": "dbz_pub_users",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "users.user_outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.user",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_users",
+      "publication.name": "dbz_pub_users",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "users.user_outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  trading.json: |
+  trading-outbox.json: |
     {
-      "name": "trading-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.trading",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_trading",
-        "publication.name": "dbz_pub_trading",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "account.outbox_events,order_svc.outbox_events,reservation.outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.trading",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_trading",
+      "publication.name": "dbz_pub_trading",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "account.outbox_events,order_svc.outbox_events,reservation.outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  ranking.json: |
+  ranking-outbox.json: |
     {
-      "name": "ranking-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.ranking",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_ranking",
-        "publication.name": "dbz_pub_ranking",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "ranking.ranking_outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.ranking",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_ranking",
+      "publication.name": "dbz_pub_ranking",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "ranking.ranking_outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  notification.json: |
+  notification-outbox.json: |
     {
-      "name": "notification-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.notification",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_notification",
-        "publication.name": "dbz_pub_notification",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "notification.outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.id": "event_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.notification",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_notification",
+      "publication.name": "dbz_pub_notification",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "notification.outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.id": "event_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  stock.json: |
+  stock-outbox.json: |
     {
-      "name": "stock-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.stock",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_stock",
-        "publication.name": "dbz_pub_stock",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "stock.outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.stock",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_stock",
+      "publication.name": "dbz_pub_stock",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "stock.outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
-  wishlist.json: |
+  wishlist-outbox.json: |
     {
-      "name": "wishlist-outbox",
-      "config": {
-        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-        "tasks.max": "1",
-        "database.hostname": "postgres.candle.svc.cluster.local",
-        "database.port": "5432",
-        "database.user": "debezium",
-        "database.password": "candle-dev-debezium-pw",
-        "database.dbname": "candle",
-        "topic.prefix": "candle.wishlist",
-        "plugin.name": "pgoutput",
-        "slot.name": "debezium_wishlist",
-        "publication.name": "dbz_pub_wishlist",
-        "publication.autocreate.mode": "filtered",
-        "table.include.list": "wishlist.outbox_events",
-        "transforms": "outbox",
-        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-        "transforms.outbox.route.by.field": "event_type",
-        "transforms.outbox.route.topic.replacement": "${routedByValue}",
-        "transforms.outbox.table.field.event.key": "aggregate_id",
-        "transforms.outbox.table.field.event.type": "event_type",
-        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-        "value.converter.schemas.enable": "false"
-      }
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "tasks.max": "1",
+      "database.hostname": "postgres.candle.svc.cluster.local",
+      "database.port": "5432",
+      "database.user": "debezium",
+      "database.password": "__DEBEZIUM_PASSWORD__",
+      "database.dbname": "candle",
+      "topic.prefix": "candle.wishlist",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_wishlist",
+      "publication.name": "dbz_pub_wishlist",
+      "publication.autocreate.mode": "filtered",
+      "table.include.list": "wishlist.outbox_events",
+      "transforms": "outbox",
+      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.topic.replacement": "${routedByValue}",
+      "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.type": "event_type",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false"
     }
 ---
 apiVersion: batch/v1
@@ -215,7 +198,7 @@ metadata:
   name: debezium-connectors-apply
   namespace: kafka
   annotations:
-    # 완료된 Job은 spec immutable → 커넥터 JSON을 고치면 재생성이 필요하다.
+    # 완료된 Job은 spec immutable → 커넥터 config를 고치면 재생성이 필요하다.
     argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 20
@@ -235,31 +218,37 @@ spec:
               done
 
               for f in /connectors/*.json; do
-                # 커넥터 이름은 JSON의 최상위 "name" (파일명 아님 — user.json → user-outbox)
-                name=$(sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+                name=$(basename "$f" .json)
                 echo "─ $name ─"
 
-                # 구버전 커넥터 정리: dbname이 candle이 아니면(= 서비스별 DB를 보던 옛 설정) 삭제 후 재생성.
-                # slot.name/topic.prefix가 함께 바뀌어 config PUT만으로는 전환되지 않는다.
-                # 이미 candle이면 건너뛰므로 재실행해도 offset이 초기화되지 않는다(멱등).
-                cur=$(curl -sf "$API/connectors/$name/config" 2>/dev/null || true)
+                # 자리표시자 → 실제 비번. ConfigMap 마운트는 read-only라 /tmp에 쓴다.
+                body=/tmp/$name.json
+                sed "s|__DEBEZIUM_PASSWORD__|$DEBEZIUM_PASSWORD|" "$f" > "$body"
+
+                # 구버전 커넥터 정리: dbname이 candle이 아니면(= 서비스별 DB를 보던 옛 설정)
+                # 삭제 후 재생성. slot.name/topic.prefix가 함께 바뀌어 갱신만으로는 전환되지 않는다.
+                # 이미 candle이면 건너뛰므로 재실행해도 offset이 초기화되지 않는다.
+                cur=$(curl -sf "$API/connectors/$name/config" || true)
                 if [ -n "$cur" ] && ! echo "$cur" | grep -q '"database.dbname" *: *"candle"'; then
-                  echo "  legacy config 감지 → DELETE $name"
+                  echo "  legacy config 감지 → DELETE"
                   curl -sf -X DELETE "$API/connectors/$name" || true
                   sleep 3
                 fi
 
-                # 존재하면 update, 없으면 create
-                curl -sf -X PUT -H 'Content-Type: application/json' --data @"$f" \
-                  "$API/connectors/$name/config" \
-                  || curl -sf -X POST -H 'Content-Type: application/json' \
-                     --data @"$f" $API/connectors
-                echo
+                # 없으면 생성, 있으면 갱신 — PUT config 하나로 처리.
+                # 응답 본문에 비번이 들어있으므로 로그로 흘리지 않는다.
+                curl -sf -X PUT -H 'Content-Type: application/json' \
+                  --data @"$body" "$API/connectors/$name/config" >/dev/null
+                rm -f "$body"
+                echo "  ok"
               done
 
               echo "=== 등록된 커넥터 ==="
               # 확인용 출력일 뿐 — 여기서 실패해도 등록은 이미 끝났으므로 Job을 죽이지 않는다.
               curl -sf $API/connectors || true
+          env:
+            - name: DEBEZIUM_PASSWORD
+              valueFrom: {secretKeyRef: {name: debezium-creds, key: password}}
           volumeMounts:
             - {name: connectors, mountPath: /connectors}
       volumes:

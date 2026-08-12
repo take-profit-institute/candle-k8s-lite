@@ -34,12 +34,14 @@ candle-k8s-lite/
 │       │   │   ├── postgres.yaml         # StatefulSet + PVC(local-path)
 │       │   │   ├── timescaledb.yaml
 │       │   │   ├── redis.yaml            # 단일 인스턴스 (prod 3개 대체)
-│       │   │   ├── init-db-job.yaml      # 서비스별 DB/유저 + <svc>-db Secret 자동생성
+│       │   │   ├── init-secrets-job.yaml # DB 자격증명 랜덤 생성 → Secret (git에 평문 없음)
+│       │   │   ├── init-db-job.yaml      # 단일 candle DB + schema/role + <svc>-db Secret 자동생성
 │       │   │   └── init-jwt-key-job.yaml # auth-service RSA 2048 keypair 1회 생성 → auth-jwt-key Secret
 │       │   └── kafka/
 │       │       ├── kafka.yaml            # KRaft 단일 브로커
 │       │       ├── kafka-connect.yaml    # Debezium 커넥터 런타임
-│       │       └── connectors-job.yaml   # 커넥터 spec을 REST로 POST
+│       │       ├── init-secrets-rbac.yaml # init-secrets가 kafka ns에 debezium-creds 복제하도록 허용
+│       │       └── connectors-job.yaml   # 커넥터 config를 REST PUT (7종)
 │       └── overlays/dev/                 # namespaces, ClusterIssuer, ingresses
 └── services/chart/                       # prod chart 카피 + ExternalSecret 제거 + redis.ssl 옵션
 ```
@@ -63,7 +65,8 @@ Terraform apply
     ├─ ingress-nginx (LoadBalancer via k3s klipper → EIP :80/:443)
     ├─ cert-manager (Let's Encrypt HTTP-01)
     ├─ external-dns (Route53 자동 레코드)
-    ├─ data-stack → init-db Job이 13개 DB + Secret 생성
+    ├─ data-stack → init-secrets Job이 DB 자격증명 랜덤 생성 → init-db Job이
+    │               단일 candle DB + 서비스별 schema/role + <svc>-db Secret 생성
     ├─ kafka-stack → connectors Job이 Debezium 커넥터 등록
     ├─ platform-config-dev (namespaces, ClusterIssuer, argocd/gateway Ingress)
     └─ candle-lite-services (13개 마이크로서비스)
@@ -113,7 +116,10 @@ kubectl apply -f platform/manifests/base/kafka/connectors-job.yaml
 
 1. **관측 스택 없음** — Prometheus/Grafana/Loki/Jaeger 제거. 로그는 `kubectl logs`, 메트릭은 없음. 필요하면 이후 `platform/applications/observability.yaml` 추가.
 2. **mTLS 없음** — Istio 미설치. 서비스간 통신은 평문(cluster network 격리에만 의존).
-3. **평문 시크릿** — postgres/kafka/service DB 자격증명이 git 커밋됨. dev 한정. prod 스타일 원하면 ESO + AWS Secrets Manager 도입.
+3. **시크릿** — git에 평문 비밀 없음. `init-secrets-job`이 postgres superuser / timescaledb(market) / debezium 비번을 클러스터 안에서 랜덤 생성(`openssl rand -hex 16`)해 Secret에 저장하고, 서비스별 role 비번은 `init-db-job`이 `<svc>-db` Secret에 생성·보존한다. 이미 있으면 재사용하므로 Job을 다시 돌려도 살아있는 서비스가 깨지지 않는다.
+   - **로테이션**: 해당 Secret 삭제 후 Job 재실행 → `ALTER ROLE`로 DB에 반영. 서비스는 `kubectl -n candle rollout restart deployment` 필요(env로 주입되므로).
+   - debezium 비번은 connectors-job이 읽어야 해서 `kafka` 네임스페이스에도 같은 값으로 복제된다.
+   - prod 스타일이 필요하면 ESO + AWS Secrets Manager로 교체.
 4. **JWT** — RS256 + JWKS로 통일 (`GatewaySecurityConfig` 주석: "대칭키 공유 폐지"). auth-service가 자체 keypair로 서명 + `/.well-known/jwks.json` 노출:
    - **gateway** → `GATEWAY_JWT_JWK_SET_URI=http://auth-service/.well-known/jwks.json`
    - **bff/chatting** → `AUTH_JWKS_URI=http://auth-service/.well-known/jwks.json`

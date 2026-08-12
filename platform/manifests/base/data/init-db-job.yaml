@@ -73,8 +73,11 @@ data:
       $PSQL -d postgres -c "CREATE DATABASE \"$APP_DB\";"
     fi
 
+    # 비번은 init-secrets-job이 만든 Secret에서 주입된다(git에 평문 없음).
+    # role이 이미 있어도 ALTER로 Secret 값과 항상 일치시킨다 → Secret 삭제 후 재생성하면 로테이션.
+
     # ── 2) debezium role — -c 옵션으로 통일 (YAML/heredoc terminator 이슈 회피)
-    $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='debezium') THEN CREATE ROLE debezium WITH LOGIN REPLICATION PASSWORD 'candle-dev-debezium-pw'; END IF; END \$\$;"
+    $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='debezium') THEN CREATE ROLE debezium WITH LOGIN REPLICATION; END IF; END \$\$; ALTER ROLE debezium WITH LOGIN REPLICATION PASSWORD '$DEBEZIUM_PASSWORD';"
     # CREATE 권한: prod는 Terraform이 publication을 사전생성하지만 lite는 커넥터가
     # publication.autocreate.mode=filtered로 직접 만든다 → CREATE PUBLICATION에 DB CREATE 필요.
     $PSQL -d "$APP_DB" -c "GRANT CONNECT ON DATABASE \"$APP_DB\" TO debezium; GRANT CREATE ON DATABASE \"$APP_DB\" TO debezium;"
@@ -82,12 +85,16 @@ data:
     # ── 3) 서비스별 role + schema (owner) + 권한
     for entry in "${SERVICES[@]}"; do
       IFS=':' read -r svc schema prefix extra_params <<<"$entry"
-      pw="candle-dev-${svc}-pw"
+
+      # 서비스별 비번: <svc>-db Secret이 이미 있으면 그 값을 그대로 재사용(파드가 물고 있는 값과
+      # 어긋나면 안 되므로). 없으면 새로 생성. → 재실행해도 살아있는 서비스가 깨지지 않는다.
+      pw=$(kubectl -n candle get secret "${svc}-db" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+      [ -n "$pw" ] || pw=$(openssl rand -hex 16)
 
       echo "─ role/schema for $svc (schema=$schema) ─"
 
       # 3a) role — heredoc 대신 -c로 통일 (YAML block scalar에서 terminator indent 이슈 회피)
-      $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='$schema') THEN CREATE ROLE \"$schema\" WITH LOGIN PASSWORD '$pw'; END IF; END \$\$;"
+      $PSQL -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='$schema') THEN CREATE ROLE \"$schema\" WITH LOGIN; END IF; END \$\$; ALTER ROLE \"$schema\" WITH LOGIN PASSWORD '$pw';"
 
       # 3b) schema (owner = 해당 role) + grants — 세미콜론 다중 statement
       # CREATE PUBLICATION ... FOR TABLE은 대상 테이블 소유자여야 한다. debezium을 서비스 role의
@@ -126,18 +133,19 @@ data:
     done
 
     # ── 4) market (TimescaleDB — 별도 인스턴스, schema 분리 아님)
+    # 비번은 timescaledb-creds Secret(= TimescaleDB 파드가 쓰는 값)을 그대로 전달한다.
     kubectl -n candle create secret generic market-service-db \
       --from-literal=host=timescaledb \
       --from-literal=port=5432 \
       --from-literal=dbname=market \
       --from-literal=username=market \
-      --from-literal=password=candle-dev-market-pw \
+      --from-literal=password="$MARKET_PASSWORD" \
       --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://timescaledb:5432/market" \
       --from-literal=SPRING_DATASOURCE_USERNAME=market \
-      --from-literal=SPRING_DATASOURCE_PASSWORD=candle-dev-market-pw \
+      --from-literal=SPRING_DATASOURCE_PASSWORD="$MARKET_PASSWORD" \
       --from-literal=MARKET_DB_URL="jdbc:postgresql://timescaledb:5432/market" \
       --from-literal=MARKET_DB_USERNAME=market \
-      --from-literal=MARKET_DB_PASSWORD=candle-dev-market-pw \
+      --from-literal=MARKET_DB_PASSWORD="$MARKET_PASSWORD" \
       --dry-run=client -o yaml | kubectl apply -f -
 
     echo "=== init-db complete (db=$APP_DB, schemas=$(echo "${SERVICES[@]}" | tr ' ' ',')) ==="
@@ -164,7 +172,7 @@ spec:
           command: [/bin/sh, -c]
           args:
             - |
-              apk add --no-cache postgresql16-client curl bash
+              apk add --no-cache postgresql16-client curl bash openssl
               curl -sLO https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl
               install kubectl /usr/local/bin/kubectl
               until pg_isready -h postgres -U postgres; do
@@ -172,8 +180,13 @@ spec:
               done
               exec bash /scripts/init.sh
           env:
+            # 전부 init-secrets-job이 만든 Secret에서 주입 (git에 평문 없음)
             - name: SUPERUSER_PASSWORD
               valueFrom: {secretKeyRef: {name: postgres-superuser, key: password}}
+            - name: DEBEZIUM_PASSWORD
+              valueFrom: {secretKeyRef: {name: debezium-creds, key: password}}
+            - name: MARKET_PASSWORD
+              valueFrom: {secretKeyRef: {name: timescaledb-creds, key: password}}
           volumeMounts:
             - {name: script, mountPath: /scripts}
       volumes:

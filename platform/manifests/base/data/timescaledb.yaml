@@ -10,16 +10,7 @@ spec:
   ports:
     - {port: 5432, targetPort: 5432}
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: timescaledb-creds
-  namespace: candle
-type: Opaque
-stringData:
-  username: market
-  password: candle-dev-market-pw
----
+# timescaledb-creds Secret(username=market)은 init-secrets-job이 랜덤 생성한다.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

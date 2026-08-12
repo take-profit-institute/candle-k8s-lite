@@ -87,13 +87,5 @@ spec:
         resources:
           requests:
             storage: 20Gi
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-superuser
-  namespace: candle
-type: Opaque
-stringData:
-  # ⚠️ dev only — 실제 배포 전 변경 권장
-  password: candle-dev-postgres-pw
+# postgres-superuser Secret은 init-secrets-job이 클러스터 안에서 랜덤 생성한다.
+# (git에 평문 비밀을 두지 않기 위함 — 파드가 Secret보다 먼저 떠도 k8s가 재시도로 흡수)
