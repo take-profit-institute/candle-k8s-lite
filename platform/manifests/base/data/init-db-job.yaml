@@ -84,8 +84,9 @@ data:
             WHERE n.nspname = '$1'
               AND c.relkind IN ('r','p','S','v','m')
               AND pg_get_userbyid(c.relowner) <> '$2'
-              -- SERIAL/IDENTITY로 테이블에 종속된 시퀀스는 소유자를 따로 못 바꾼다
-              -- ("cannot change owner of sequence ... is linked to table"). 테이블을 바꾸면 따라온다.
+              -- SERIAL/IDENTITY로 테이블에 종속된 시퀀스는 소유자를 따로 못 바꾼다.
+              -- 테이블 소유자를 바꾸면 연결된 시퀀스도 따라온다.
+              -- (이 주석에 큰따옴표를 쓰면 psql -c 의 셸 문자열이 조기 종료된다)
               AND NOT (c.relkind = 'S' AND EXISTS (
                     SELECT 1 FROM pg_depend d
                     WHERE d.objid = c.oid
