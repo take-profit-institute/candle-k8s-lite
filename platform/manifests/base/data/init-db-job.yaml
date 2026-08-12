@@ -68,6 +68,36 @@ data:
     )
     TRADING_EXTRA_SCHEMAS=(account order_svc reservation)
 
+    # 스냅샷 덤프를 postgres 계정으로 복구하면 스키마/테이블 소유자가 전부 postgres가 된다.
+    # 그러면 서비스 role이 자기 테이블에 DDL을 못 하고, Debezium도 publication에 테이블을
+    # 추가할 수 없다("must be owner of table"). → 소유권을 스키마 담당 role로 정상화한다.
+    # 이미 올바른 소유자면 건너뛰므로 재실행해도 비용이 없다.
+    fix_owner() {  # $1=schema  $2=role
+      $PSQL -d "$APP_DB" -c "
+        ALTER SCHEMA \"$1\" OWNER TO \"$2\";
+        DO \$\$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT c.relname, c.relkind
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = '$1'
+              AND c.relkind IN ('r','p','S','v','m')
+              AND pg_get_userbyid(c.relowner) <> '$2'
+          LOOP
+            IF r.relkind IN ('r','p') THEN
+              EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '$1', r.relname, '$2');
+            ELSIF r.relkind = 'S' THEN
+              EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', '$1', r.relname, '$2');
+            ELSIF r.relkind = 'v' THEN
+              EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
+            ELSIF r.relkind = 'm' THEN
+              EXECUTE format('ALTER MATERIALIZED VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
+            END IF;
+          END LOOP;
+        END \$\$;"
+    }
+
     # ── 1) DB 생성 (없으면)
     if ! $PSQL -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$APP_DB'" | grep -q 1; then
       $PSQL -d postgres -c "CREATE DATABASE \"$APP_DB\";"
@@ -105,10 +135,14 @@ data:
       # public에 객체를 만들 때 "permission denied for schema public"으로 기동 실패한다.
       $PSQL -d "$APP_DB" -c "GRANT USAGE, CREATE ON SCHEMA public TO \"$schema\";"
 
+      # 복구된 객체 소유권 정상화 (덤프 복구 후 1회 의미 있음)
+      fix_owner "$schema" "$schema"
+
       # 3c) trading 추가 schema
       if [ "$schema" = "trading" ]; then
         for extra in "${TRADING_EXTRA_SCHEMAS[@]}"; do
           $PSQL -d "$APP_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$extra\" AUTHORIZATION \"trading\"; GRANT USAGE ON SCHEMA \"$extra\" TO debezium; GRANT SELECT ON ALL TABLES IN SCHEMA \"$extra\" TO debezium; ALTER DEFAULT PRIVILEGES FOR ROLE \"trading\" IN SCHEMA \"$extra\" GRANT SELECT ON TABLES TO debezium;"
+          fix_owner "$extra" "trading"
         done
       fi
 
