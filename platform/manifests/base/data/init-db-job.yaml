@@ -101,6 +101,10 @@ data:
       # 멤버로 넣어 소유권 검사를 통과시킨다(멤버십 = has_privs_of_role). prod는 사전생성이라 불필요.
       $PSQL -d "$APP_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$schema\" AUTHORIZATION \"$schema\"; GRANT CONNECT ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT CREATE ON DATABASE \"$APP_DB\" TO \"$schema\"; GRANT USAGE ON SCHEMA \"$schema\" TO debezium; GRANT SELECT ON ALL TABLES IN SCHEMA \"$schema\" TO debezium; ALTER DEFAULT PRIVILEGES FOR ROLE \"$schema\" IN SCHEMA \"$schema\" GRANT SELECT ON TABLES TO debezium; GRANT \"$schema\" TO debezium;"
 
+      # PG15+는 public 스키마의 CREATE 권한을 PUBLIC에서 회수했다. 서비스 Flyway 마이그레이션이
+      # public에 객체를 만들 때 "permission denied for schema public"으로 기동 실패한다.
+      $PSQL -d "$APP_DB" -c "GRANT USAGE, CREATE ON SCHEMA public TO \"$schema\";"
+
       # 3c) trading 추가 schema
       if [ "$schema" = "trading" ]; then
         for extra in "${TRADING_EXTRA_SCHEMAS[@]}"; do
@@ -130,6 +134,16 @@ data:
         --from-literal=${prefix}_DB_USERNAME="$schema" \
         --from-literal=${prefix}_DB_PASSWORD="$pw" \
         --dry-run=client -o yaml | kubectl apply -f -
+    done
+
+    # ── 3-2) 고아 publication 소유권 정리
+    # 스냅샷 덤프를 복구하면 prod에서 Terraform이 만든 dbz_pub_* publication이 postgres 소유로
+    # 딸려온다. Debezium은 소유자가 아니면 ALTER PUBLICATION을 못 해서
+    # "Unable to update filtered publication"으로 task가 죽는다 → 소유권을 debezium으로 옮긴다.
+    # (debezium은 위 루프에서 각 서비스 role의 멤버가 되므로 대상 테이블 소유권 검사도 통과)
+    for pub in $($PSQL -d "$APP_DB" -tAc "SELECT pubname FROM pg_publication WHERE pubname LIKE 'dbz\_pub\_%' AND pg_get_userbyid(pubowner) <> 'debezium'"); do
+      echo "─ publication $pub → owner debezium ─"
+      $PSQL -d "$APP_DB" -c "ALTER PUBLICATION \"$pub\" OWNER TO debezium;"
     done
 
     # ── 4) market (TimescaleDB — 별도 인스턴스, schema 분리 아님)
