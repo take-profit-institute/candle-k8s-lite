@@ -1,0 +1,87 @@
+# 프론트엔드(webapp / admin) — Next 정적 export를 클러스터 안 nginx로 서빙.
+# prod의 S3+CloudFront 대체. 추가 AWS 리소스 없이 기존 ingress-nginx + cert-manager를 재사용한다.
+#
+# 이미지는 webapp repo의 push-webapp-lite / push-admin-lite 잡이 빌드한다.
+# ⚠️ NEXT_PUBLIC_*는 정적 export 시점에 번들로 박히므로 lite 도메인 전용 이미지다.
+#    API 주소를 바꾸려면 이미지를 다시 빌드해야 한다(런타임 env로는 못 바꾼다).
+# 태그는 mutable한 :lite 대신 커밋 SHA로 고정한다 — :lite로 두면 노드에 캐시된 이미지가
+# 그대로 쓰이고 ArgoCD도 매니페스트 변화를 못 봐서 새 빌드가 반영되지 않는다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: candle
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: webapp}
+  template:
+    metadata:
+      labels: {app: webapp}
+    spec:
+      containers:
+        - name: webapp
+          image: yyubin/candle-webapp:8691662e734fb0cc7c6d594fe484c0131e6110ff
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: {path: /healthz, port: 80}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 80}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp
+  namespace: candle
+spec:
+  selector: {app: webapp}
+  ports:
+    - {name: http, port: 80, targetPort: 80}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin
+  namespace: candle
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: admin}
+  template:
+    metadata:
+      labels: {app: admin}
+    spec:
+      containers:
+        - name: admin
+          image: yyubin/candle-admin:8691662e734fb0cc7c6d594fe484c0131e6110ff
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: {path: /healthz, port: 80}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: 80}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin
+  namespace: candle
+spec:
+  selector: {app: admin}
+  ports:
+    - {name: http, port: 80, targetPort: 80}

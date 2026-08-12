@@ -11,7 +11,7 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: [api.lite.candle.io.kr, app.lite.candle.io.kr]
+    - hosts: [api.lite.candle.io.kr, app.lite.candle.io.kr, admin.lite.candle.io.kr]
       secretName: gateway-tls
   rules:
     - host: api.lite.candle.io.kr
@@ -24,6 +24,8 @@ spec:
                 name: gateway
                 port:
                   number: 8000
+    # 프론트엔드 정적 번들(클러스터 내 nginx). API는 api.* 의 gateway를 통해 호출한다.
+    # (이전에는 이 호스트가 bff로 직결돼 있었으나, bff는 gateway 뒤에 있는 내부 서비스다.)
     - host: app.lite.candle.io.kr
       http:
         paths:
@@ -31,6 +33,16 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: bff
+                name: webapp
+                port:
+                  number: 80
+    - host: admin.lite.candle.io.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin
                 port:
                   number: 80
