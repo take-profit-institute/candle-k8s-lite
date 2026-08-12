@@ -84,6 +84,15 @@ data:
             WHERE n.nspname = '$1'
               AND c.relkind IN ('r','p','S','v','m')
               AND pg_get_userbyid(c.relowner) <> '$2'
+              -- SERIAL/IDENTITY로 테이블에 종속된 시퀀스는 소유자를 따로 못 바꾼다
+              -- ("cannot change owner of sequence ... is linked to table"). 테이블을 바꾸면 따라온다.
+              AND NOT (c.relkind = 'S' AND EXISTS (
+                    SELECT 1 FROM pg_depend d
+                    WHERE d.objid = c.oid
+                      AND d.classid = 'pg_class'::regclass
+                      AND d.deptype IN ('a','i')))
+            -- 테이블 먼저(연결 시퀀스가 함께 넘어가도록), 그 다음 나머지
+            ORDER BY CASE c.relkind WHEN 'r' THEN 0 WHEN 'p' THEN 0 ELSE 1 END
           LOOP
             IF r.relkind IN ('r','p') THEN
               EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '$1', r.relname, '$2');
