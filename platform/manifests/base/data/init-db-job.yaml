@@ -149,6 +149,9 @@ metadata:
   namespace: candle
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    # 완료된 Job은 spec이 immutable → 스크립트를 고치면 patch sync가 실패한다.
+    # Replace=true면 ArgoCD가 delete 후 재생성한다(매니페스트가 바뀔 때만). 이 Job은 멱등.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 20
   template:

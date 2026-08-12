@@ -99,14 +99,124 @@ data:
         "value.converter.schemas.enable": "false"
       }
     }
-  # 나머지 서비스(ranking, notification, stock, wishlist)는 위 패턴 복붙 — 필요할 때 추가.
-  # notification은 prod에서 table.field.event.id=event_id도 함께 지정한다.
+  ranking.json: |
+    {
+      "name": "ranking-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.ranking",
+        "plugin.name": "pgoutput",
+        "slot.name": "debezium_ranking",
+        "publication.name": "dbz_pub_ranking",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "ranking.ranking_outbox_events",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
+      }
+    }
+  notification.json: |
+    {
+      "name": "notification-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.notification",
+        "plugin.name": "pgoutput",
+        "slot.name": "debezium_notification",
+        "publication.name": "dbz_pub_notification",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "notification.outbox_events",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.id": "event_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
+      }
+    }
+  stock.json: |
+    {
+      "name": "stock-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.stock",
+        "plugin.name": "pgoutput",
+        "slot.name": "debezium_stock",
+        "publication.name": "dbz_pub_stock",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "stock.outbox_events",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
+      }
+    }
+  wishlist.json: |
+    {
+      "name": "wishlist-outbox",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "1",
+        "database.hostname": "postgres.candle.svc.cluster.local",
+        "database.port": "5432",
+        "database.user": "debezium",
+        "database.password": "candle-dev-debezium-pw",
+        "database.dbname": "candle",
+        "topic.prefix": "candle.wishlist",
+        "plugin.name": "pgoutput",
+        "slot.name": "debezium_wishlist",
+        "publication.name": "dbz_pub_wishlist",
+        "publication.autocreate.mode": "filtered",
+        "table.include.list": "wishlist.outbox_events",
+        "transforms": "outbox",
+        "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+        "transforms.outbox.route.by.field": "event_type",
+        "transforms.outbox.route.topic.replacement": "${routedByValue}",
+        "transforms.outbox.table.field.event.key": "aggregate_id",
+        "transforms.outbox.table.field.event.type": "event_type",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
+      }
+    }
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: debezium-connectors-apply
   namespace: kafka
+  annotations:
+    # 완료된 Job은 spec immutable → 커넥터 JSON을 고치면 재생성이 필요하다.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 20
   template:
@@ -119,20 +229,37 @@ spec:
           args:
             - |
               set -eu
-              until curl -sf http://kafka-connect:8083/connectors >/dev/null; do
+              API=http://kafka-connect:8083
+              until curl -sf $API/connectors >/dev/null; do
                 echo "waiting kafka-connect..."; sleep 5
               done
+
               for f in /connectors/*.json; do
-                name=$(basename "$f" .json)
-                echo "─ registering $name ─"
+                # 커넥터 이름은 JSON의 최상위 "name" (파일명 아님 — user.json → user-outbox)
+                name=$(sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' "$f" | head -1)
+                echo "─ $name ─"
+
+                # 구버전 커넥터 정리: dbname이 candle이 아니면(= 서비스별 DB를 보던 옛 설정) 삭제 후 재생성.
+                # slot.name/topic.prefix가 함께 바뀌어 config PUT만으로는 전환되지 않는다.
+                # 이미 candle이면 건너뛰므로 재실행해도 offset이 초기화되지 않는다(멱등).
+                cur=$(curl -sf "$API/connectors/$name/config" 2>/dev/null || true)
+                if [ -n "$cur" ] && ! echo "$cur" | grep -q '"database.dbname" *: *"candle"'; then
+                  echo "  legacy config 감지 → DELETE $name"
+                  curl -sf -X DELETE "$API/connectors/$name" || true
+                  sleep 3
+                fi
+
                 # 존재하면 update, 없으면 create
-                curl -sf -X PUT -H 'Content-Type: application/json' \
-                  --data @"$f" \
-                  "http://kafka-connect:8083/connectors/$(cat $f | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p')/config" \
+                curl -sf -X PUT -H 'Content-Type: application/json' --data @"$f" \
+                  "$API/connectors/$name/config" \
                   || curl -sf -X POST -H 'Content-Type: application/json' \
-                     --data @"$f" http://kafka-connect:8083/connectors
+                     --data @"$f" $API/connectors
                 echo
               done
+
+              echo "=== 등록된 커넥터 ==="
+              # 확인용 출력일 뿐 — 여기서 실패해도 등록은 이미 끝났으므로 Job을 죽이지 않는다.
+              curl -sf $API/connectors || true
           volumeMounts:
             - {name: connectors, mountPath: /connectors}
       volumes:
