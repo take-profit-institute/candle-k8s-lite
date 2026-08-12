@@ -157,9 +157,11 @@ metadata:
   namespace: candle
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    # 완료된 Job은 spec이 immutable → 스크립트를 고치면 patch sync가 실패한다.
-    # Replace=true면 ArgoCD가 delete 후 재생성한다(매니페스트가 바뀔 때만). 이 Job은 멱등.
-    argocd.argoproj.io/sync-options: Replace=true
+    # Sync hook + BeforeHookCreation = 매 sync마다 이전 Job 삭제 후 재생성.
+    # (완료된 Job은 spec immutable + 컨트롤러 주입 selector 때문에 replace/patch 모두 실패한다)
+    # 이 Job은 멱등이며, 서비스 비번은 기존 <svc>-db Secret을 재사용하므로 재실행이 안전하다.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 20
   template:

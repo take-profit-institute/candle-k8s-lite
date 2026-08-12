@@ -198,8 +198,11 @@ metadata:
   name: debezium-connectors-apply
   namespace: kafka
   annotations:
-    # 완료된 Job은 spec immutable → 커넥터 config를 고치면 재생성이 필요하다.
-    argocd.argoproj.io/sync-options: Replace=true
+    # Sync hook + BeforeHookCreation = 매 sync마다 이전 Job 삭제 후 재생성.
+    # (완료된 Job은 spec immutable + 컨트롤러 주입 selector 때문에 replace/patch 모두 실패한다)
+    # PUT config는 없으면 생성·있으면 갱신이라 재실행이 안전하다.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 20
   template:
