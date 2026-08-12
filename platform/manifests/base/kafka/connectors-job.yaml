@@ -17,6 +17,12 @@ data:
   #   users → users.user_outbox_events / ranking → ranking.ranking_outbox_events
   #   trading → account/order_svc/reservation 3개 스키마의 outbox_events를 한 커넥터가 캡처
   #
+  # EventRouter 필드도 서비스마다 다르다(실제 컬럼 기준):
+  #   대부분     : id / event_type / aggregate_id / payload
+  #   notification: PK가 event_id
+  #   ranking     : PK가 event_id
+  #   users       : event_type·aggregate_id가 아예 없고 topic / partition_key를 쓴다
+  #
   # 비번은 git에 두지 않는다 — __DEBEZIUM_PASSWORD__ 자리표시자를 Job이 kafka/debezium-creds
   # Secret 값으로 치환해 POST한다. (Secret은 init-secrets-job이 생성·복제)
   #
@@ -63,10 +69,10 @@ data:
       "table.include.list": "users.user_outbox_events",
       "transforms": "outbox",
       "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-      "transforms.outbox.route.by.field": "event_type",
+      "transforms.outbox.route.by.field": "topic",
       "transforms.outbox.route.topic.replacement": "${routedByValue}",
-      "transforms.outbox.table.field.event.key": "aggregate_id",
-      "transforms.outbox.table.field.event.type": "event_type",
+      "transforms.outbox.table.field.event.key": "partition_key",
+      "transforms.outbox.table.field.event.type": "topic",
       "value.converter": "org.apache.kafka.connect.json.JsonConverter",
       "value.converter.schemas.enable": "false"
     }
@@ -114,6 +120,7 @@ data:
       "transforms.outbox.route.by.field": "event_type",
       "transforms.outbox.route.topic.replacement": "${routedByValue}",
       "transforms.outbox.table.field.event.key": "aggregate_id",
+      "transforms.outbox.table.field.event.id": "event_id",
       "transforms.outbox.table.field.event.type": "event_type",
       "value.converter": "org.apache.kafka.connect.json.JsonConverter",
       "value.converter.schemas.enable": "false"

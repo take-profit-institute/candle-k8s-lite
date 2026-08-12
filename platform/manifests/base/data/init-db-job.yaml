@@ -94,15 +94,20 @@ data:
             -- 테이블 먼저(연결 시퀀스가 함께 넘어가도록), 그 다음 나머지
             ORDER BY CASE c.relkind WHEN 'r' THEN 0 WHEN 'p' THEN 0 ELSE 1 END
           LOOP
-            IF r.relkind IN ('r','p') THEN
-              EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '$1', r.relname, '$2');
-            ELSIF r.relkind = 'S' THEN
-              EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', '$1', r.relname, '$2');
-            ELSIF r.relkind = 'v' THEN
-              EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
-            ELSIF r.relkind = 'm' THEN
-              EXECUTE format('ALTER MATERIALIZED VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
-            END IF;
+            -- 객체 하나가 실패해도 나머지는 계속 처리한다(전체 Job이 죽지 않도록).
+            BEGIN
+              IF r.relkind IN ('r','p') THEN
+                EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '$1', r.relname, '$2');
+              ELSIF r.relkind = 'S' THEN
+                EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', '$1', r.relname, '$2');
+              ELSIF r.relkind = 'v' THEN
+                EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
+              ELSIF r.relkind = 'm' THEN
+                EXECUTE format('ALTER MATERIALIZED VIEW %I.%I OWNER TO %I', '$1', r.relname, '$2');
+              END IF;
+            EXCEPTION WHEN others THEN
+              RAISE NOTICE 'skip %.% (%): %', '$1', r.relname, r.relkind, SQLERRM;
+            END;
           END LOOP;
         END \$\$;"
     }
