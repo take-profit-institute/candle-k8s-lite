@@ -20,8 +20,8 @@ spec:
           - {name: ranking-service,      tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "ranking-service-db",      dbEnvPrefix: "RANKING"}
           - {name: mission-service,      tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "mission-service-db",      dbEnvPrefix: "MISSION"}
           - {name: learning-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "learning-service-db",     dbEnvPrefix: "LEARNING"}
-          - {name: market-service,       tag: 1ade843d85eb69b084eb07ae60b699b643322e5d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "market-service-db",       dbEnvPrefix: "MARKET"}
-          - {name: notification-service, tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "notification-service-db", dbEnvPrefix: "NOTIFICATION"}
+          - {name: market-service,       tag: 1ade843d85eb69b084eb07ae60b699b643322e5d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "market-service-db",       dbEnvPrefix: "MARKET", appSecret: "market-service-app"}
+          - {name: notification-service, tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "notification-service-db", dbEnvPrefix: "NOTIFICATION", firebaseCredentialsSecret: "notification-firebase"}
           - {name: stock-service,        tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "stock-service-db",        dbEnvPrefix: "STOCK"}
           - {name: wishlist-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "wishlist-service-db",     dbEnvPrefix: "WISHLIST"}
           - {name: news-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  grpcHealth: false, http: true, metricsEnabled: false, hpaEnabled: false, dbSecret: "news-service-db", dbEnvPrefix: "NEWS"}
@@ -83,7 +83,16 @@ spec:
               marketPubsubHost: "redis"
               # 인클러스터 평문 — SSL 필요 없음. deployment.yaml이 SSL_ENABLED=true를 하드코딩하는
               # 서비스(market/trading/ranking)는 chart 수정 필요(README 참고).
-            appSecret: ""
+            # 외부 서비스 자격증명(키움 API 키, FCM 서비스 계정 등)은 git에 두지 않는다.
+            # repo가 public이므로 Secret은 클러스터에서 직접 생성하고 여기서는 이름만 참조한다.
+            #   kubectl -n candle create secret generic market-service-app \
+            #     --from-literal=KIWOOM_BASE_URL=... --from-literal=KIWOOM_APP_KEY=... \
+            #     --from-literal=KIWOOM_SECRET_KEY=...
+            #   kubectl -n candle create secret generic notification-firebase \
+            #     --from-file=firebase-adminsdk.json=<경로>
+            # appSecret이 비어있지 않으면 chart가 <name>-app Secret을 envFrom으로 주입한다.
+            appSecret: {{ default "" .appSecret | quote }}
+            firebaseCredentialsSecret: {{ default "" .firebaseCredentialsSecret | quote }}
             # dev이므로 리소스 타이트하게
             resources:
               requests:
