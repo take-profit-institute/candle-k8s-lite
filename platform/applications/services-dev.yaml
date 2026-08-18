@@ -29,7 +29,13 @@ spec:
           # (ranking/stock-candle/portfolio-eod/trading은 @ConditionalOnProperty라 빈 자체가 등록 안 됨)
           # cron은 zone: Asia/Seoul 고정 — 노드가 UTC여도 KST 기준으로 돈다.
           # market-order-book(매분)은 키움 rate limit을 stock-candle 적재와 나눠 쓰게 되므로 lite에선 끈 채로 둔다.
-          - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH", env: [{name: "BATCH_STOCK_SYNC_ENABLED", value: "true"}, {name: "BATCH_STOCK_CANDLE_INGEST_ENABLED", value: "true"}, {name: "BATCH_PORTFOLIO_EOD_ENABLED", value: "true"}, {name: "BATCH_RANKING_ENABLED", value: "true"}, {name: "BATCH_TRADING_ENABLED", value: "true"}]}
+          #
+          # cron도 함께 덮어쓴다. 배포 이미지(1a4704bb)의 기본 cron은 stock-candle 21:55 / portfolio-eod 16:00 이라
+          # 종가를 만드는 잡이 그것을 소비하는 잡보다 6시간 늦게 돈다. 그 결과 portfolio-eod가
+          # EodBatchException(QUOTE_DATE_MISMATCH: 시세 기준일이 거래일과 다릅니다)로 매일 실패한다.
+          # 아래 값은 이 순서를 바로잡은 최신 소스의 기본값과 같다: stock-sync → stock-candle → portfolio-eod → ranking.
+          # 배치 이미지를 최신으로 재빌드하면 이 override는 제거해도 된다.
+          - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH", env: [{name: "BATCH_STOCK_SYNC_ENABLED", value: "true"}, {name: "BATCH_STOCK_CANDLE_INGEST_ENABLED", value: "true"}, {name: "BATCH_PORTFOLIO_EOD_ENABLED", value: "true"}, {name: "BATCH_RANKING_ENABLED", value: "true"}, {name: "BATCH_TRADING_ENABLED", value: "true"}, {name: "BATCH_STOCK_SYNC_CRON", value: "0 35 15 * * MON-FRI"}, {name: "BATCH_STOCK_CANDLE_INGEST_CRON", value: "0 45 15 * * MON-FRI"}, {name: "BATCH_PORTFOLIO_EOD_CRON", value: "0 20 16 * * MON-FRI"}, {name: "BATCH_RANKING_CRON", value: "0 40 16 * * MON-FRI"}]}
           # advisory-service — 유일한 Python 서비스(투자성향 기반 종목 추천, LangGraph+OpenAI).
           # batch와 같은 gRPC 전용 형태(http: false) → startup/liveness/readiness 전부 grpc health.
           # dbEnvPrefix를 비워 chart의 Spring용 *_DB_URL 주입을 건너뛰고, envFrom으로
