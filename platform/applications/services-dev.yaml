@@ -38,7 +38,11 @@ spec:
           # EodBatchException(QUOTE_DATE_MISMATCH: 시세 기준일이 거래일과 다릅니다)로 매일 실패한다.
           # 아래 값은 이 순서를 바로잡은 최신 소스의 기본값과 같다: stock-sync → stock-candle → portfolio-eod → ranking.
           # 배치 이미지를 최신으로 재빌드하면 이 override는 제거해도 된다.
-          - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH", env: [{name: "BATCH_STOCK_SYNC_ENABLED", value: "true"}, {name: "BATCH_STOCK_CANDLE_INGEST_ENABLED", value: "true"}, {name: "BATCH_PORTFOLIO_EOD_ENABLED", value: "true"}, {name: "BATCH_RANKING_ENABLED", value: "true"}, {name: "BATCH_TRADING_ENABLED", value: "true"}, {name: "BATCH_STOCK_SYNC_CRON", value: "0 35 15 * * MON-FRI"}, {name: "BATCH_STOCK_CANDLE_INGEST_CRON", value: "0 45 15 * * MON-FRI"}, {name: "BATCH_PORTFOLIO_EOD_CRON", value: "0 20 16 * * MON-FRI"}, {name: "BATCH_RANKING_CRON", value: "0 40 16 * * MON-FRI"}]}
+          #
+          # gRPC read 데드라인 기본값 300ms는 portfolio-eod가 portfolio-service에서 보유 종목을
+          # 읽을 때 DEADLINE_EXCEEDED로 떨어질 만큼 빡빡하다(단일 노드라 다른 잡 부하에 그대로 노출).
+          # 종가 조회가 stock-service의 키움 on-demand 백필을 타면 수십 초가 걸리기도 한다.
+          - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH", env: [{name: "BATCH_STOCK_SYNC_ENABLED", value: "true"}, {name: "BATCH_STOCK_CANDLE_INGEST_ENABLED", value: "true"}, {name: "BATCH_PORTFOLIO_EOD_ENABLED", value: "true"}, {name: "BATCH_RANKING_ENABLED", value: "true"}, {name: "BATCH_TRADING_ENABLED", value: "true"}, {name: "BATCH_STOCK_SYNC_CRON", value: "0 35 15 * * MON-FRI"}, {name: "BATCH_STOCK_CANDLE_INGEST_CRON", value: "0 45 15 * * MON-FRI"}, {name: "BATCH_PORTFOLIO_EOD_CRON", value: "0 20 16 * * MON-FRI"}, {name: "BATCH_RANKING_CRON", value: "0 40 16 * * MON-FRI"}, {name: "BATCH_GRPC_READ_DEADLINE_MILLIS", value: "5000"}]}
           # advisory-service — 유일한 Python 서비스(투자성향 기반 종목 추천, LangGraph+OpenAI).
           # batch와 같은 gRPC 전용 형태(http: false) → startup/liveness/readiness 전부 grpc health.
           # dbEnvPrefix를 비워 chart의 Spring용 *_DB_URL 주입을 건너뛰고, envFrom으로
