@@ -22,7 +22,10 @@ spec:
           - {name: learning-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "learning-service-db",     dbEnvPrefix: "LEARNING"}
           - {name: market-service,       tag: 1ade843d85eb69b084eb07ae60b699b643322e5d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "market-service-db",       dbEnvPrefix: "MARKET", appSecret: "market-service-app"}
           - {name: notification-service, tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "notification-service-db", dbEnvPrefix: "NOTIFICATION", firebaseCredentialsSecret: "notification-firebase"}
-          - {name: stock-service,        tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "stock-service-db",        dbEnvPrefix: "STOCK"}
+          # 일봉 적재/종가 조회가 키움 REST를 직접 호출한다. 자격증명이 없으면 인증 실패가 아니라
+          # 조용히 0건을 반환해서(stockSyncJob이 total=0으로 COMPLETED) 하위 잡까지 빈손으로 흐른다.
+          # 주의: market-service는 KIWOOM_SECRET_KEY, stock-service는 KIWOOM_APP_SECRET 으로 이름이 다르다.
+          - {name: stock-service,        tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "stock-service-db",        dbEnvPrefix: "STOCK", appSecret: "stock-service-app"}
           - {name: wishlist-service,     tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "wishlist-service-db",     dbEnvPrefix: "WISHLIST"}
           - {name: news-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  grpcHealth: false, http: true, metricsEnabled: false, hpaEnabled: false, dbSecret: "news-service-db", dbEnvPrefix: "NEWS", appSecret: "news-service-app", env: [{name: "NEWS_COLLECTION_SCHEDULER_ENABLED", value: "false"}]}
           # 배치 잡은 application.yml에서 전부 enabled:false가 기본이라 env로 켜야 스케줄러가 뜬다.
