@@ -1,4 +1,4 @@
-# DB 스택 — postgres(공용) + timescaledb(market) + redis×2
+# DB 스택 — postgres(공용) + timescaledb(market) + advisory-postgres(pgvector) + redis
 # 매니페스트: platform/manifests/base/data/
 apiVersion: argoproj.io/v1alpha1
 kind: Application

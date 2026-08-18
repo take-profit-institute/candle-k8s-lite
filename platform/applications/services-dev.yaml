@@ -30,6 +30,16 @@ spec:
           # cron은 zone: Asia/Seoul 고정 — 노드가 UTC여도 KST 기준으로 돈다.
           # market-order-book(매분)은 키움 rate limit을 stock-candle 적재와 나눠 쓰게 되므로 lite에선 끈 채로 둔다.
           - {name: batch,                tag: 1a4704bb78829e2e4143996a671e52444e4276a9, replicas: 1, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "batch-db", dbEnvPrefix: "BATCH", env: [{name: "BATCH_STOCK_SYNC_ENABLED", value: "true"}, {name: "BATCH_STOCK_CANDLE_INGEST_ENABLED", value: "true"}, {name: "BATCH_PORTFOLIO_EOD_ENABLED", value: "true"}, {name: "BATCH_RANKING_ENABLED", value: "true"}, {name: "BATCH_TRADING_ENABLED", value: "true"}]}
+          # advisory-service — 유일한 Python 서비스(투자성향 기반 종목 추천, LangGraph+OpenAI).
+          # batch와 같은 gRPC 전용 형태(http: false) → startup/liveness/readiness 전부 grpc health.
+          # dbEnvPrefix를 비워 chart의 Spring용 *_DB_URL 주입을 건너뛰고, envFrom으로
+          # advisory-service-db의 DATABASE_URL(asyncpg DSN)만 받는다. DB는 공용 postgres가
+          # 아니라 전용 advisory-postgres(pgvector) — 이유는 data/advisory-postgres.yaml 참고.
+          # GRPC_PORT는 파이썬 앱이 읽는 이름(chart가 주는 GRPC_SERVER_PORT가 아니다) → 9090으로 맞춘다.
+          # 사전 조건: OPENAI_API_KEY Secret이 없으면 파드가 뜨지 않는다.
+          #   kubectl -n candle create secret generic advisory-service-app --from-literal=OPENAI_API_KEY=...
+          # tag: pending = 최초 이미지 대기. advisory-service repo의 aws-ci가 커밋 SHA로 bump한다.
+          - {name: advisory-service,     tag: pending, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "advisory-service-db", appSecret: "advisory-service-app", env: [{name: "GRPC_PORT", value: "9090"}, {name: "STOCK_SERVICE_GRPC_TARGET", value: "stock-service:9090"}, {name: "STOCK_SYNC_RUN_ON_STARTUP", value: "false"}]}
           - {name: bff,                  tag: 3d544d28209175454f998af49f6b00827a1853c9, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, healthPath: "/health", dbSecret: "", env: [{name: "REDIS_URL", value: "redis://redis:6379"}, {name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
           # chatting은 DB 없음(Redis Only). REDIS_URL은 chart의 wishlist 분기 스타일과 달리 env로 직접 주입.
           - {name: chatting-service,     tag: 43560309ecf6f354fabc01d04f79ee64905d9dd2, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "", env: [{name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}, {name: "REDIS_URL", value: "redis://redis:6379"}]}

@@ -27,13 +27,14 @@ candle-k8s-lite/
 │   │   ├── data-stack.yaml               # → base/data
 │   │   ├── kafka.yaml                    # → base/kafka
 │   │   ├── platform-config-dev.yaml      # → overlays/dev
-│   │   └── services-dev.yaml             # ApplicationSet 13종
+│   │   └── services-dev.yaml             # ApplicationSet (Java 13종 + gateway/bff + advisory-service)
 │   └── manifests/
 │       ├── base/
 │       │   ├── data/
 │       │   │   ├── postgres.yaml         # StatefulSet + PVC(local-path)
 │       │   │   ├── timescaledb.yaml
 │       │   │   ├── redis.yaml            # 단일 인스턴스 (prod 3개 대체)
+│       │   │   ├── advisory-postgres.yaml # advisory-service 전용 pgvector 인스턴스
 │       │   │   ├── init-secrets-job.yaml # DB 자격증명 랜덤 생성 → Secret (git에 평문 없음)
 │       │   │   ├── init-db-job.yaml      # 단일 candle DB + schema/role + <svc>-db Secret 자동생성
 │       │   │   └── init-jwt-key-job.yaml # auth-service RSA 2048 keypair 1회 생성 → auth-jwt-key Secret
@@ -106,6 +107,37 @@ Terraform variables.tf 의 `gitops_repo_org` / `gitops_repo_name` 도 함께 변
 kubectl -n kafka delete job debezium-connectors-apply
 kubectl apply -f platform/manifests/base/kafka/connectors-job.yaml
 ```
+
+## advisory-service (유일한 Python 서비스)
+
+Java 서비스와 다른 점만 정리한다. 나머지는 `services/chart`를 그대로 쓴다.
+
+| 항목 | Java 서비스 | advisory-service |
+|---|---|---|
+| 소스 repo | `candle` 모노레포 | `advisory-service` (별도 repo) |
+| ECR/CI role | prod `infrastructure/global` 소유 | `infrastructure-lite/envs/dev/ci.tf` 소유 |
+| 포트 | HTTP 8080 + gRPC 9090 | **gRPC 9090만** (`http: false`, actuator 없음) |
+| probe | HTTP actuator / gRPC health | 전부 gRPC health (`batch`와 동일) |
+| DB | 공용 postgres의 서비스별 schema | **전용 `advisory-postgres`** (pgvector) |
+| DB 주입 | `SPRING_DATASOURCE_URL` 등 | `DATABASE_URL` (asyncpg DSN) 하나 |
+| 스키마 | Flyway | 앱이 기동 시 `schema.sql` 멱등 적용 |
+
+주의할 점 두 가지.
+
+1. **`GRPC_PORT` env를 반드시 준다.** chart가 주입하는 이름은 `GRPC_SERVER_PORT`(Spring 규약)라
+   파이썬 앱이 읽지 않는다. 값이 없으면 앱 기본값 50051로 뜨는데 probe/Service는 9090을 보므로
+   startupProbe가 계속 실패한다.
+2. **`advisory-service-app` Secret이 없으면 파드가 뜨지 않는다.** chart가 `envFrom`으로 참조하는데
+   존재하지 않으면 `CreateContainerConfigError`가 난다.
+
+```bash
+kubectl -n candle create secret generic advisory-service-app --from-literal=OPENAI_API_KEY=...
+```
+
+DB 자격증명(`advisory-service-db`)은 `init-secrets-job`이 만든다. `advisory-postgres`
+StatefulSet과 앱이 같은 Secret을 보므로 값이 어긋나지 않는다. 비번을 바꾸려면 Secret 삭제 후
+Job 재실행만으로는 부족하고(이미 초기화된 DB는 옛 비번 유지) `ALTER USER advisory PASSWORD ...`를
+함께 실행해야 한다.
 
 ## 서비스 이미지 tag 갱신
 

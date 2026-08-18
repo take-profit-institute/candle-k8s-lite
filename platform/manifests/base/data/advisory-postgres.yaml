@@ -1,0 +1,69 @@
+# advisory-service 전용 PostgreSQL (pgvector).
+#
+# 왜 공용 postgres에 얹지 않는가:
+#   1) advisory는 pgvector(VECTOR 컬럼 + HNSW 인덱스)가 필요한데 공용 postgres는
+#      postgres:16-alpine이라 확장이 없다. 이미지를 pgvector/pgvector:pg16으로
+#      바꾸면 alpine(musl) → debian(glibc)로 libc collation이 바뀌어 이미 들어있는
+#      13개 서비스의 텍스트 인덱스가 깨질 수 있다.
+#   2) advisory는 기동 시 CREATE EXTENSION을 직접 실행한다(Flyway 대체). pgvector는
+#      trusted extension이 아니라 superuser가 필요한데, 전용 인스턴스라면 앱 role이
+#      그대로 superuser라 별도 부트스트랩 Job 없이 끝난다.
+#   3) 파이썬(asyncpg)이라 공용 init-db-job이 만드는 JDBC URL 규약을 쓸 수 없다.
+#
+# 자격증명(advisory-service-db Secret)은 init-secrets-job이 클러스터 안에서 생성한다.
+# 이 StatefulSet과 advisory-service 파드가 같은 Secret을 보므로 값이 어긋날 일이 없다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: advisory-postgres
+  namespace: candle
+spec:
+  clusterIP: None
+  selector: {app: advisory-postgres}
+  ports:
+    - {port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: advisory-postgres
+  namespace: candle
+spec:
+  serviceName: advisory-postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: advisory-postgres}
+  template:
+    metadata:
+      labels: {app: advisory-postgres}
+    spec:
+      containers:
+        - name: postgres
+          # pgvector 공식 이미지 — 태그의 pg16은 공용 postgres와 동일 메이저.
+          image: pgvector/pgvector:pg16
+          ports: [{containerPort: 5432}]
+          env:
+            - {name: POSTGRES_DB, value: advisory}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: advisory-service-db, key: username}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: advisory-service-db, key: password}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, advisory, -d, advisory]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          # 종목 4천 개 캐시 + 1536차원 임베딩 + 추천 이력. 공용(20Gi)보다 작게 잡는다.
+          requests: {storage: 10Gi}
