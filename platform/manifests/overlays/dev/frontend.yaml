@@ -61,7 +61,7 @@ spec:
     spec:
       containers:
         - name: admin
-          image: yyubin/candle-admin:69513acd9de4c84037eb2cdc698091d92c4101bb
+          image: yyubin/candle-admin:1b59fe3e02817928e455933f8b8cee5183e22f0f
           ports:
             - containerPort: 80
           readinessProbe:
