@@ -14,7 +14,7 @@ spec:
           # auth-service는 자체 keypair로 RS256 JWT 발급 + /.well-known/jwks.json 노출.
           # AUTH_JWT_ISSUER는 gateway/bff/chatting의 issuer validator와 일치해야 함(api.lite.<zone>).
           - {name: auth-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "auth-service-db",         dbEnvPrefix: "AUTH", appSecret: "auth-service-app", env: [{name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
-          - {name: user-service,         tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "user-service-db",         dbEnvPrefix: "USER"}
+          - {name: user-service,         tag: f5e13e1c3f6c4745135cfd916e9a2431b7416051, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "user-service-db",         dbEnvPrefix: "USER"}
           - {name: trading-service,      tag: c59bfbdc26a65e3ca3bde91870312957d9bcc458, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "trading-service-db",      dbEnvPrefix: "TRADING"}
           - {name: portfolio-service,    tag: 5f372b3b80bd3137a9b26574b55ae9636df2523d, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "portfolio-service-db",    dbEnvPrefix: "PORTFOLIO"}
           - {name: ranking-service,      tag: 6a1e0f6d36c11a637baa2213694fec2360d236e6, grpc: true,  http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "ranking-service-db",      dbEnvPrefix: "RANKING"}
@@ -53,10 +53,7 @@ spec:
           #   kubectl -n candle create secret generic advisory-service-app --from-literal=OPENAI_API_KEY=...
           # tag: pending = 최초 이미지 대기. advisory-service repo의 aws-ci가 커밋 SHA로 bump한다.
           - {name: advisory-service,     tag: b237f182c119d447e5b827daecebaef90505421b, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "advisory-service-db", appSecret: "advisory-service-app", env: [{name: "GRPC_PORT", value: "9090"}, {name: "STOCK_SERVICE_GRPC_TARGET", value: "stock-service:9090"}, {name: "STOCK_SYNC_RUN_ON_STARTUP", value: "false"}]}
-          # lite의 bff는 gateway/webapp/admin과 마찬가지로 Docker Hub 이미지를 쓴다.
-          # webapp 레포의 push-bff-lite 잡이 yyubin/candle-bff:<SHA>를 푸시하고 이 tag를 bump한다.
-          # (prod는 push-bff 잡이 같은 SHA를 ECR에 올려 candle-k8s를 bump — 레지스트리만 다르고 내용은 같다.)
-          - {name: bff,                  tag: 69513acd9de4c84037eb2cdc698091d92c4101bb, image: "yyubin/candle-bff", grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, healthPath: "/health", dbSecret: "", env: [{name: "REDIS_URL", value: "redis://redis:6379"}, {name: "GRPC_ADVISORY_ADDR", value: "advisory-service:9090"}, {name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
+          - {name: bff,                  tag: d7934414ef3edd3c64f854c7b43512f9af9b96b3, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, healthPath: "/health", dbSecret: "", env: [{name: "REDIS_URL", value: "redis://redis:6379"}, {name: "GRPC_ADVISORY_ADDR", value: "advisory-service:9090"}, {name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
           # chatting은 DB 없음(Redis Only). REDIS_URL은 chart의 wishlist 분기 스타일과 달리 env로 직접 주입.
           # CHAT_CORS_ALLOWED_ORIGINS는 필수다. chatting-service의 CorsWebFilter가 "/**"에 걸려 있어
           # /chat/rooms(REST)뿐 아니라 /chat/ws(WS 핸드셰이크)까지 Origin을 검사한다. 기본값에는
