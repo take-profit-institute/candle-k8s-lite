@@ -55,7 +55,11 @@ spec:
           - {name: advisory-service,     tag: b237f182c119d447e5b827daecebaef90505421b, grpc: true, http: false, metricsEnabled: false, hpaEnabled: false, dbSecret: "advisory-service-db", appSecret: "advisory-service-app", env: [{name: "GRPC_PORT", value: "9090"}, {name: "STOCK_SERVICE_GRPC_TARGET", value: "stock-service:9090"}, {name: "STOCK_SYNC_RUN_ON_STARTUP", value: "false"}]}
           - {name: bff,                  tag: 69513acd9de4c84037eb2cdc698091d92c4101bb, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, healthPath: "/health", dbSecret: "", env: [{name: "REDIS_URL", value: "redis://redis:6379"}, {name: "GRPC_ADVISORY_ADDR", value: "advisory-service:9090"}, {name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}]}
           # chatting은 DB 없음(Redis Only). REDIS_URL은 chart의 wishlist 분기 스타일과 달리 env로 직접 주입.
-          - {name: chatting-service,     tag: 43560309ecf6f354fabc01d04f79ee64905d9dd2, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "", env: [{name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}, {name: "REDIS_URL", value: "redis://redis:6379"}]}
+          # CHAT_CORS_ALLOWED_ORIGINS는 필수다. chatting-service의 CorsWebFilter가 "/**"에 걸려 있어
+          # /chat/rooms(REST)뿐 아니라 /chat/ws(WS 핸드셰이크)까지 Origin을 검사한다. 기본값에는
+          # localhost/vercel/capacitor만 있어서 lite 웹앱 origin이 403으로 막힌다 — 방 배정이 실패하니
+          # roomId가 null로 남고 WS는 시도조차 되지 않는다(브라우저는 WS에도 Origin 헤더를 붙인다).
+          - {name: chatting-service,     tag: 43560309ecf6f354fabc01d04f79ee64905d9dd2, grpc: false, http: true,  metricsEnabled: false, hpaEnabled: false, dbSecret: "", env: [{name: "AUTH_JWKS_URI", value: "http://auth-service/.well-known/jwks.json"}, {name: "AUTH_JWT_ISSUER", value: "https://api.lite.candle.io.kr"}, {name: "AUTH_JWT_AUDIENCE", value: "candle-api"}, {name: "REDIS_URL", value: "redis://redis:6379"}, {name: "CHAT_CORS_ALLOWED_ORIGINS", value: "https://app.lite.candle.io.kr,https://admin.lite.candle.io.kr,http://localhost:3000,http://localhost:8000,capacitor://localhost"}]}
           # ── gateway (Spring Cloud Gateway) — prod의 AWS API Gateway를 컨테이너로 대체
           # 컨테이너/서비스 포트 8000. JWT는 RS256+JWKS (auth-service /.well-known/jwks.json).
           # ISSUER는 auth-service가 발급 시 넣는 값과 반드시 일치. AUDIENCE 검증 활성.
