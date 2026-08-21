@@ -1,0 +1,52 @@
+# WebSocket 전용 진입 — prod의 ws.<domain> ALB(candle-k8s/platform/manifests/base/ws-ingress.yaml) 대체.
+#
+# ⚠️ gateway를 타면 안 된다. lite의 gateway는 Spring Cloud Gateway가 아니라
+#    WebClient로 요청을 되쏘는 ProxyWebFilter다(gateway/src/.../proxy/ProxyWebFilter.java).
+#    WebClient는 HTTP Upgrade를 프록시하지 못하고, hop-by-hop 헤더(Connection/Upgrade)를
+#    EXCLUDED_REQUEST_HEADERS로 떼어내기까지 해서 핸드셰이크가 평범한 GET으로 업스트림에 도달한다.
+#    → /ws, /chat/ws 모두 404. prod는 이 구간을 ALB가 passthrough 해서 문제가 드러나지 않았다.
+#    (게다가 ProxyWebFilter의 chat 분기는 /chat/rooms 만 매칭해서 /chat/ws는 bff로 잘못 흘렀다.)
+#
+# 그래서 lite에서는 ingress-nginx가 두 WS 경로를 gateway 앞에서 가로채 백엔드로 직결한다.
+# nginx-ingress는 같은 host의 location을 prefix 길이 내림차순으로 매칭하므로
+# /chat/ws > /ws > / (gateway) 순으로 잡힌다. /chat/rooms(REST)는 그대로 gateway를 탄다.
+#
+# 인증은 각 백엔드가 핸드셰이크에서 직접 처리한다 — chatting-service는 ?token= JWT를
+# HandshakeAuthenticator로 검증(실패 시 close 4401), bff /ws는 시세 브로드캐스트라 무인증.
+# 따라서 gateway의 JWT 필터를 건너뛰어도 인증 구멍이 생기지 않는다.
+#
+# host/TLS는 gateway Ingress(gateway-ingress.yaml)가 이미 선언한 것을 재사용한다.
+# 같은 host를 두 Ingress가 나눠 가지면 nginx가 server 블록을 병합하므로 여기서는
+# tls/cert-manager 애너테이션을 다시 쓰지 않는다(중복 발급 방지).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ws
+  namespace: candle
+  annotations:
+    # 긴 WS 커넥션 유지. 기본 60s면 조용한 구간(장 마감 등)에 nginx가 먼저 끊는다.
+    # 이 애너테이션은 Ingress 리소스 단위라 gateway의 REST 경로에는 영향이 없다.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.lite.candle.io.kr
+      http:
+        paths:
+          # 종목 채팅 WS → chatting-service. /chat/rooms(REST)보다 구체적이라 먼저 매칭된다.
+          - path: /chat/ws
+            pathType: Prefix
+            backend:
+              service:
+                name: chatting-service
+                port:
+                  number: 80
+          # 시세 WS → bff (@fastify/websocket, 30s ping heartbeat)
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: bff
+                port:
+                  number: 80
