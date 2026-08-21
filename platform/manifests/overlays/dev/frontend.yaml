@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: webapp
-          image: yyubin/candle-webapp:69513acd9de4c84037eb2cdc698091d92c4101bb
+          image: yyubin/candle-webapp:d7934414ef3edd3c64f854c7b43512f9af9b96b3
           ports:
             - containerPort: 80
           readinessProbe:
@@ -61,7 +61,7 @@ spec:
     spec:
       containers:
         - name: admin
-          image: yyubin/candle-admin:1b59fe3e02817928e455933f8b8cee5183e22f0f
+          image: yyubin/candle-admin:d7934414ef3edd3c64f854c7b43512f9af9b96b3
           ports:
             - containerPort: 80
           readinessProbe:
